@@ -6,8 +6,10 @@ import {
   Eye, EyeOff, TrendingUp, Building2, PieChart, Clock, Shield
 } from "lucide-react";
 
-const SUPABASE_URL = "https://dzwfpdtqyiizjijndutk.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR6d2ZwZHRxeWlpemppam5kdXRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NzE3MjMsImV4cCI6MjA5MTI0NzcyM30.O0cZIycxrO_5XySMy1lJ4Xp4AuzNPnUybIqxam_YXd8";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 
 export const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
