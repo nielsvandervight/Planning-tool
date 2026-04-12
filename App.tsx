@@ -27,63 +27,43 @@ export default function App() {
   const [status, setStatus] = useState<any>(null);
 
 
-  async function fetchUsers() {
-    const { data, error } = await sb.from('employees').select('*').order('name');
-    if (error) console.error("Ophaalfout:", error.message);
-    if (data) setAllUsers(data);
+ async function addUser() {
+  if (!naam.trim() || !email.trim() || !password.trim()) {
+    alert("Vul alstublieft een naam, e-mail en wachtwoord in.");
+    return;
   }
 
-  
-  useEffect(() => {
-    fetchUsers();
-  }, []);
+  setLoading(true);
 
-  async function addUser() {
-    // 1. Validatie: check of alle velden zijn ingevuld
-    if (!naam.trim() || !email.trim() || !password.trim()) {
-      alert("Vul alstublieft een naam, e-mail en wachtwoord in.");
-      return;
+  // DIT STUKJE IS CRUCIAAL:
+  const { data, error } = await sb
+    .from('employees')
+    .insert([
+      { 
+        name: naam, 
+        email: email, 
+        password: password, 
+        is_admin: isAdmin 
+      }
+    ])
+    .select(); // De .select() zorgt dat je de nieuwe gebruiker terugkrijgt
+
+  if (error) {
+    console.error("Fout bij toevoegen:", error.message);
+    setStatus({ type: "err", msg: "Fout: " + error.message });
+  } else {
+    // Voeg de nieuwe gebruiker toe aan de lijst die je op het scherm ziet
+    if (data) {
+      setAllUsers(prev => [...prev, data[0]]);
     }
-
-    setLoading(true);
-    
-    try {
-      // 2. Data verzenden naar de 'employees' tabel
-      const { error } = await sb
-        .from('employees')
-        .insert([
-          {
-           
-            name: naam.trim(),
-            email: email.trim().toLowerCase(),
-            password: password, 
-            is_admin: isAdmin,
-            // Je kunt hier ook direct andere standaardwaarden meegeven indien nodig:
-            hourly_wage: 0
-          }
-        ]);
-
-     
-      if (error) throw error;
-
-      
-      setNaam("");
-      setEmail("");
-      setPassword("");
-      setIsAdmin(false);
-      
-      alert("Medewerker succesvol toegevoegd!");
-      
-      
-      await fetchUsers();
-
-    } catch (err: any) {
-      console.error("Fout bij toevoegen:", err);
-      alert("Er ging iets mis: " + (err.message || "Onbekende fout"));
-    } finally {
-      setLoading(false);
-    }
+    setStatus({ type: "ok", msg: "Medewerker succesvol toegevoegd!" });
+    // Maak de velden leeg
+    setNaam("");
+    setEmail("");
+    setPassword("");
   }
+  setLoading(false);
+}
 
   return (
     <div style={{ padding: '20px' }}>
