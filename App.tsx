@@ -1,19 +1,25 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { createClient, Session } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 import {
   Users, Calendar, Settings, Euro, LogOut, ChevronLeft, ChevronRight,
   Plus, Trash2, Printer, Zap, ToggleLeft, ToggleRight, AlertTriangle,
   Eye, EyeOff, TrendingUp, Building2, PieChart, Clock, Shield
 } from "lucide-react";
 
+// Haal de variabelen op
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// Debug hulp: Dit laat in je browser console zien of de verbinding überhaupt kán werken
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error("FOUT: Supabase URL of Key ontbreekt in .env bestand!");
+}
 
-
+// Maak één client aan
 export const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-export const supabase = sb; 
+
+// Voor het geval dat je in andere bestanden 'supabase' gebruikt i.p.v. 'sb':
+export const supabase = sb;
 
 
 export default function App() {
