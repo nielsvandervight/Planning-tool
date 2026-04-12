@@ -310,20 +310,43 @@ function AdminUserPanel() {
   const [loading, setLoading] = useState(false);
   const [status,  setStatus]  = useState<{type:"ok"|"err";msg:string}|null>(null);
 
-  async function addUser() {
-    if (!naam.trim() || !email.trim()) { setStatus({type:"err",msg:"Naam en e-mail zijn verplicht."}); return; }
-    setLoading(true); setStatus(null);
-    try {
-      const { error } = await (sb.auth as any).admin.inviteUserByEmail(email, {
-        data: { name:naam, role:isAdmin?"admin":"planner" }
-      });
-      if (error) throw error;
-      const masked = email.replace(/(?<=.{2}).(?=[^@]*@)/g,"*");
-      setStatus({type:"ok",msg:`Uitnodiging verstuurd → ${masked}`});
-      setNaam(""); setEmail("");
-    } catch(e:any) { setStatus({type:"err",msg:e.message||"Er ging iets mis."}); }
-    setLoading(false);
+ async function addUser() {
+  if (!naam.trim() || !email.trim() || !password.trim()) {
+    alert("Vul alstublieft een naam, e-mail en wachtwoord in.");
+    return;
   }
+
+  setLoading(true);
+
+  // Gebruik de kolomnamen zoals gedefinieerd in de SQL hierboven
+  const { data, error } = await sb
+    .from('employees')
+    .insert([
+      { 
+        name: naam, 
+        email: email, 
+        password: password, 
+        is_admin: isAdmin,
+        standard_off_days: ["Zaterdag", "Zondag"], // Standaard vrije dagen
+        vacation_dates: [] 
+      }
+    ])
+    .select();
+
+  if (error) {
+    console.error("Fout bij toevoegen:", error.message);
+    setStatus({ type: "err", msg: "Fout: " + error.message });
+  } else {
+    if (data) {
+      setAllUsers(prev => [...prev, data[0]]);
+    }
+    setStatus({ type: "ok", msg: "Medewerker succesvol toegevoegd!" });
+    setNaam("");
+    setEmail("");
+    setPassword("");
+  }
+  setLoading(false);
+}
 
   return (
     <div style={{ background:"#0f172a", borderRadius:"16px", padding:"28px", maxWidth:"520px", border:"1px solid #1e293b" }}>
