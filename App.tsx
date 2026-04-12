@@ -322,8 +322,8 @@ function LoginScreen() {
 
 
 function AdminUserPanel() {
-  const [naam,    setNaam]    = useState("Niels test");
-  const [email,   setEmail]   = useState("niels-ajax@hotmail.com");
+  const [naam,    setNaam]    = useState("");
+  const [email,   setEmail]   = useState("");
   const [isAdmin, setIsAdmin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [status,  setStatus]  = useState<{type:"ok"|"err";msg:string}|null>(null);
