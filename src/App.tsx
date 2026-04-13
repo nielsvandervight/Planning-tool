@@ -3,60 +3,25 @@ import { createClient, Session } from "@supabase/supabase-js";
 import {
   Users, Calendar, Settings, Euro, LogOut, ChevronLeft, ChevronRight,
   Plus, Trash2, Printer, Zap, ToggleLeft, ToggleRight, AlertTriangle,
-  Eye, EyeOff, TrendingUp, Building2, PieChart, Clock, Shield
+  Eye, EyeOff, TrendingUp, Building2, PieChart, Clock, Shield, Coffee
 } from "lucide-react";
 
-// ─── SUPABASE ─────────────────────────────────────────────────────────────────
-// 1. Eerst de verbinding maken en de naam 'sb' geven
-const SUPABASE_URL = "https://dzwfpdtqyiizjijndutk.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR6d2ZwZHRxeWlpemppam5kdXRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NzE3MjMsImV4cCI6MjA5MTI0NzcyM30.O0cZIycxrO_5XySMy1lJ4Xp4AuzNPnUybIqxam_YXd8";
-
-// Hier maken we de 'sb' aan die op regel 1546 wordt gezocht
-export const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-// 2. Voor de zekerheid maken we 'supabase' ook een kopie van 'sb'
-// Mocht je op andere plekken de naam 'supabase' gebruiken, dan werkt dat nu ook.
+// ─── Supabase client ────────────────────────────────────────────────────────
+const SUPABASE_URL      = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error("FOUT: Supabase URL of Key ontbreekt in .env bestand!");
+}
+export const sb       = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 export const supabase = sb;
 
-// ─── SQL VOOR SUPABASE (kopieer naar SQL Editor) ──────────────────────────────
-/*
--- Uitbreidingen employees tabel
-ALTER TABLE employees
-  ADD COLUMN IF NOT EXISTS hourly_wage    DECIMAL(10,2) DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS is_admin       BOOLEAN       DEFAULT false,
-  ADD COLUMN IF NOT EXISTS default_shift_id TEXT;
-
--- Schedule tabel met slot_id als Primary Key
-CREATE TABLE IF NOT EXISTS schedule (
-  slot_id    TEXT PRIMARY KEY,
-  rows       JSONB NOT NULL DEFAULT '[]',
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- RLS
-ALTER TABLE employees   ENABLE ROW LEVEL SECURITY;
-ALTER TABLE schedule    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE clients     ENABLE ROW LEVEL SECURITY;
-ALTER TABLE subcategories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE shift_defs  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE departments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE skills      ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "auth_all" ON employees    FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "auth_all" ON schedule     FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "auth_all" ON clients      FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "auth_all" ON subcategories FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "auth_all" ON shift_defs   FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "auth_all" ON departments  FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "auth_all" ON skills       FOR ALL TO authenticated USING (true) WITH CHECK (true);
-*/
-
-// ─── TYPES ────────────────────────────────────────────────────────────────────
+// ─── Types ──────────────────────────────────────────────────────────────────
 interface Department  { id: string; name: string; }
 interface Skill       { id: string; name: string; criteria: string; }
 interface ShiftDef    { id: string; label: string; hours: number[]; }
 interface Subcategory { id: string; clientId: string; name: string; targetSkills: string[]; }
 interface Client      { id: string; name: string; departmentId: string; fteNeeded: number; }
+interface BreakConfig { id: string; durationMinutes: number; label: string; }
 interface Employee {
   id: string; name: string; departmentId: string;
   hoursPerWeek: number; mainClientId: string;
@@ -67,43 +32,22 @@ interface Employee {
   defaultShiftId: string;
   hourlyWage: number;
   isAdmin: boolean;
+  color: string;
+  breaks: BreakConfig[];
 }
 interface SlotRow   { employeeId: string; shiftId: string; selectedHours: number[]; }
 interface SlotEntry { rows: SlotRow[]; }
 
-// ─── SEED DATA ────────────────────────────────────────────────────────────────
-const SEED_DEPTS: Department[] = [
-  { id:"d1", name:"Warehouse" }, { id:"d2", name:"Customer Service" }
-];
-const SEED_SKILLS: Skill[] = [
-  { id:"s1", name:"SAP Classic",  criteria:"Kan zelfstandig werken in SAP ECC." },
-  { id:"s2", name:"SAP S/4 HANA", criteria:"Werkt goed met SAP S/4 HANA." }
-];
-const SEED_SHIFTS: ShiftDef[] = [
-  { id:"sh1", label:"07–16", hours:[7,8,9,10,11,12,13,14,15] },
-  { id:"sh2", label:"08–17", hours:[8,9,10,11,12,13,14,15,16] },
-  { id:"sh3", label:"09–18", hours:[9,10,11,12,13,14,15,16,17] },
-];
-const SEED_CLIENTS: Client[] = [
-  { id:"c1", name:"Lesaffre", departmentId:"d1", fteNeeded: 2.5 }
-];
-const SEED_SUBCATS: Subcategory[] = [
-  { id:"sub1", clientId:"c1", name:"Inbound",  targetSkills:["s1"] },
-  { id:"sub2", clientId:"c1", name:"Outbound", targetSkills:["s2"] }
-];
-const SEED_EMPS: Employee[] = [{
-  id:"e1", name:"Niels", departmentId:"d1", hoursPerWeek:40,
-  mainClientId:"c1", subCatIds:["sub1","sub2"],
-  subCatSkills:{ sub1:{s1:90}, sub2:{s2:50} },
-  standardOffDays:["Zaterdag","Zondag"], vacationDates:[],
-  defaultShiftId:"sh2", hourlyWage:18.50, isAdmin:true
-}];
-
+// ─── Constanten ─────────────────────────────────────────────────────────────
 const WORK_HOURS   = [5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22];
 const DAY_LABELS   = ["Maandag","Dinsdag","Woensdag","Donderdag","Vrijdag","Zaterdag","Zondag"];
 const MONTH_LABELS = ["Januari","Februari","Maart","April","Mei","Juni","Juli","Augustus","September","Oktober","November","December"];
+const EMPLOYEE_COLORS = [
+  "#3B82F6","#10B981","#F59E0B","#EF4444","#8B5CF6","#EC4899","#06B6D4","#84CC16",
+  "#F97316","#6366F1","#14B8A6","#F43F5E","#A78BFA","#34D399","#FBBF24","#60A5FA"
+];
 
-// ─── HELPERS ──────────────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────
 function fmtDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
@@ -136,19 +80,37 @@ function groupByWeek(dates: Date[]): Date[][] {
 }
 function dayLabel(d: Date): string { return DAY_LABELS[d.getDay()===0?6:d.getDay()-1]; }
 
-/**
- * PAUZE REGEL:
- * - > 4 uur geselecteerd? → 1u pauze aftrek ALS totaal >= 9 blokjes
- * - <= 4 uur? → geen aftrek
- */
+// ─── Pauze berekening (configureerbaar per medewerker) ──────────────────────
+function totalBreakMinutes(emp: Employee, selectedHours: number[]): number {
+  const bruto = selectedHours?.length || 0;
+  if (!emp.breaks || emp.breaks.length === 0) {
+    // Fallback: standaard 30 min bij >= 9 uur
+    return bruto >= 9 ? 60 : 0;
+  }
+  return emp.breaks.reduce((sum, b) => sum + b.durationMinutes, 0);
+}
+function nettoUrenEmp(emp: Employee, selectedHours: number[]): number {
+  const bruto = selectedHours?.length || 0;
+  const breakH = totalBreakMinutes(emp, selectedHours) / 60;
+  return Math.max(0, bruto - breakH);
+}
 function nettoUren(selectedHours: number[]): number {
   const bruto = selectedHours?.length || 0;
   if (bruto >= 9) return bruto - 1;
   return bruto;
 }
-
 function fmtEuro(n: number): string {
   return new Intl.NumberFormat("nl-NL", { style:"currency", currency:"EUR" }).format(n);
+}
+function contrastColor(hex: string): string {
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  return (r*299+g*587+b*114)/1000 > 128 ? "#000000" : "#ffffff";
+}
+function getWeekKey(date: Date): string {
+  const sw = startOfWeek(date);
+  return fmtDate(sw);
 }
 
 function useDebounce<T extends (...args: any[]) => any>(fn: T, delay: number): T {
@@ -159,21 +121,22 @@ function useDebounce<T extends (...args: any[]) => any>(fn: T, delay: number): T
   }, [fn, delay]) as T;
 }
 
-// ─── PRINT CSS ────────────────────────────────────────────────────────────────
+// ─── Print CSS (tijdslijn-weergave) ─────────────────────────────────────────
 function buildPrintCSS(size: "A4"|"A3"): string {
-  const fs=size==="A4"?"5.8pt":"7.5pt", hfs=size==="A4"?"5pt":"6.5pt";
-  const colW=size==="A4"?"52px":"72px", labelW=size==="A4"?"80px":"110px";
-  return `@media print{*{box-sizing:border-box}body{margin:0;background:#fff!important;color:#111!important;font-family:'Helvetica Neue',Arial,sans-serif}.screen-only{display:none!important}.print-wrap{display:block!important}.pw-page{page-break-after:always;padding:0}.pw-page:last-child{page-break-after:auto}.pw-header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2.5px solid #0f172a;padding-bottom:5px;margin-bottom:8px}.pw-title{font-size:${size==="A4"?"13pt":"16pt"};font-weight:900;color:#0f172a}.pw-sub{font-size:${hfs};color:#64748b;margin-top:2px}.pw-meta{font-size:${hfs};color:#94a3b8;text-align:right}.pw-tbl{border-collapse:collapse;width:100%}.pw-tbl th{background:#1e293b!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#f8fafc!important;font-size:${hfs};font-weight:700;padding:3px;text-align:center}.pw-tbl td{border:1px solid #e2e8f0;font-size:${fs};padding:2px 3px;vertical-align:top}.pw-tbl tr.client-hdr td{background:#0f172a!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#38bdf8!important;font-weight:700;font-size:${hfs};padding:3px 5px}.pw-tbl tr.sub-row td:first-child{background:#f8fafc!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#475569;padding-left:8px;min-width:${labelW};max-width:${labelW};word-wrap:break-word}.pw-tbl .col-label{min-width:${labelW};max-width:${labelW}}.pw-tbl .col-day{min-width:${colW};max-width:${colW};width:${colW}}.pw-emp{font-weight:700;color:#1e293b;font-size:${fs}}.pw-hrs{color:#64748b;font-size:${size==="A4"?"4.5pt":"5.5pt"}}.pw-badge{display:inline-block;background:#3b82f6!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#fff!important;border-radius:2px;padding:0 2px;font-size:4pt;margin-left:2px}.pw-emp2{color:#7c3aed}.pw-fte-ok{color:#059669!important}.pw-fte-low{color:#dc2626!important}@page{size:${size} landscape;margin:8mm}}`;
+  const fs = size==="A4" ? "5.8pt" : "7.5pt";
+  const hfs = size==="A4" ? "5pt" : "6.5pt";
+  const colW = size==="A4" ? "52px" : "72px";
+  const labelW = size==="A4" ? "80px" : "110px";
+  const timeW = size==="A4" ? "22px" : "28px";
+  return `@media print{*{box-sizing:border-box}body{margin:0;background:#fff!important;color:#111!important;font-family:'Helvetica Neue',Arial,sans-serif}.screen-only{display:none!important}.print-wrap{display:block!important}.pw-page{page-break-after:always;padding:0}.pw-page:last-child{page-break-after:auto}.pw-header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2.5px solid #0f172a;padding-bottom:5px;margin-bottom:8px}.pw-title{font-size:${size==="A4"?"13pt":"16pt"};font-weight:900;color:#0f172a}.pw-sub{font-size:${hfs};color:#64748b;margin-top:2px}.pw-meta{font-size:${hfs};color:#94a3b8;text-align:right}.pw-tbl{border-collapse:collapse;width:100%}.pw-tbl th{background:#1e293b!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#f8fafc!important;font-size:${hfs};font-weight:700;padding:3px;text-align:center}.pw-tbl td{border:1px solid #e2e8f0;font-size:${fs};padding:0;vertical-align:top}.pw-tbl tr.client-hdr td{background:#0f172a!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#38bdf8!important;font-weight:700;font-size:${hfs};padding:3px 5px}.pw-tbl tr.sub-row td:first-child{background:#f8fafc!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#475569;padding-left:8px;min-width:${labelW};max-width:${labelW};word-wrap:break-word}.pw-tbl .col-label{min-width:${labelW};max-width:${labelW}}.pw-tbl .col-day{min-width:${colW};max-width:${colW};width:${colW}}.pw-tbl .col-time{min-width:${timeW};max-width:${timeW};width:${timeW};text-align:center;font-size:4pt;color:#94a3b8;background:#f8fafc!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;padding:1px}.pw-timeline-cell{position:relative;height:100%}.pw-emp-block{-webkit-print-color-adjust:exact;print-color-adjust:exact;border-radius:2px;padding:1px 2px;margin:1px;font-size:${fs};font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pw-badge{display:inline-block;background:#3b82f6!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#fff!important;border-radius:2px;padding:0 2px;font-size:4pt;margin-left:2px}.pw-fte-ok{color:#059669!important}.pw-fte-low{color:#dc2626!important}@page{size:${size} landscape;margin:8mm}}`;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// LOGIN
-// ═════════════════════════════════════════════════════════════════════════════
+// ─── Login ───────────────────────────────────────────────────────────────────
 function LoginScreen() {
-  const [email,    setEmail]    = useState("");
+  const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
-  const [error,    setError]    = useState("");
-  const [loading,  setLoading]  = useState(false);
+  const [error, setError]       = useState("");
+  const [loading, setLoading]   = useState(false);
 
   async function handleLogin() {
     setLoading(true); setError("");
@@ -192,25 +155,20 @@ function LoginScreen() {
           <div style={{ fontSize:"24px", fontWeight:"700", color:"white", letterSpacing:"-0.5px" }}>Personeelsplanning</div>
           <div style={{ fontSize:"13px", color:"#475569", marginTop:"6px" }}>Inloggen om verder te gaan</div>
         </div>
-
         <div style={{ marginBottom:"16px" }}>
           <label style={{ fontSize:"11px", fontWeight:"600", color:"#64748B", display:"block", marginBottom:"6px", letterSpacing:"0.06em" }}>E-MAILADRES</label>
-          <input type="password" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)}
-            placeholder="••••••••@bedrijf.nl"
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="naam@bedrijf.nl"
             style={{ width:"100%", padding:"11px 14px", background:"#1e293b", color:"white", border:"1px solid #334155", borderRadius:"10px", fontSize:"14px", boxSizing:"border-box", outline:"none" }}/>
         </div>
-
         <div style={{ marginBottom:"24px" }}>
           <label style={{ fontSize:"11px", fontWeight:"600", color:"#64748B", display:"block", marginBottom:"6px", letterSpacing:"0.06em" }}>WACHTWOORD</label>
           <input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)}
             onKeyDown={e => e.key==="Enter" && handleLogin()} placeholder="••••••••"
             style={{ width:"100%", padding:"11px 14px", background:"#1e293b", color:"white", border:"1px solid #334155", borderRadius:"10px", fontSize:"14px", boxSizing:"border-box", outline:"none" }}/>
         </div>
-
         {error && <div style={{ background:"rgba(239,68,68,0.1)", border:"1px solid rgba(239,68,68,0.3)", color:"#FCA5A5", borderRadius:"8px", padding:"10px 14px", marginBottom:"16px", fontSize:"13px" }}>{error}</div>}
-
         <button onClick={handleLogin} disabled={loading}
-          style={{ width:"100%", padding:"12px", background:loading?"#1e293b":"#3B82F6", border:"none", color:"white", borderRadius:"10px", fontWeight:"700", fontSize:"15px", cursor:loading?"wait":"pointer", transition:"all 0.2s" }}>
+          style={{ width:"100%", padding:"12px", background:loading?"#1e293b":"#3B82F6", border:"none", color:"white", borderRadius:"10px", fontWeight:"700", fontSize:"15px", cursor:loading?"wait":"pointer" }}>
           {loading ? "Inloggen..." : "Inloggen"}
         </button>
       </div>
@@ -218,93 +176,19 @@ function LoginScreen() {
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// ADMIN GEBRUIKERSPANEL
-// ═════════════════════════════════════════════════════════════════════════════
-function AdminUserPanel() {
-  const [naam,    setNaam]    = useState("Niels test");
-  const [email,   setEmail]   = useState("niels-ajax@hotmail.com");
-  const [isAdmin, setIsAdmin] = useState(true);
-  const [loading, setLoading] = useState(false);
-  const [status,  setStatus]  = useState<{type:"ok"|"err";msg:string}|null>(null);
-
-  async function addUser() {
-    if (!naam.trim() || !email.trim()) { setStatus({type:"err",msg:"Naam en e-mail zijn verplicht."}); return; }
-    setLoading(true); setStatus(null);
-    try {
-      const { error } = await (sb.auth as any).admin.inviteUserByEmail(email, {
-        data: { name:naam, role:isAdmin?"admin":"planner" }
-      });
-      if (error) throw error;
-      const masked = email.replace(/(?<=.{2}).(?=[^@]*@)/g,"*");
-      setStatus({type:"ok",msg:`Uitnodiging verstuurd → ${masked}`});
-      setNaam(""); setEmail("");
-    } catch(e:any) { setStatus({type:"err",msg:e.message||"Er ging iets mis."}); }
-    setLoading(false);
-  }
-
-  return (
-    <div style={{ background:"#0f172a", borderRadius:"16px", padding:"28px", maxWidth:"520px", border:"1px solid #1e293b" }}>
-      <div style={{ display:"flex", alignItems:"center", gap:"10px", marginBottom:"24px" }}>
-        <Shield size={20} color="#8B5CF6"/>
-        <h3 style={{ margin:0, color:"white", fontSize:"16px", fontWeight:"700" }}>Nieuwe gebruiker uitnodigen</h3>
-      </div>
-
-      <div style={{ marginBottom:"16px" }}>
-        <label style={{ fontSize:"11px", fontWeight:"600", color:"#64748B", display:"block", marginBottom:"6px", letterSpacing:"0.06em" }}>NAAM (zichtbaar op scherm)</label>
-        <input type="text" value={naam} onChange={e => setNaam(e.target.value)} placeholder="Jan de Vries"
-          style={{ width:"100%", padding:"10px 14px", background:"#1e293b", color:"white", border:"1px solid #334155", borderRadius:"8px", fontSize:"13px", boxSizing:"border-box", outline:"none" }}/>
-      </div>
-
-      <div style={{ marginBottom:"16px" }}>
-        <label style={{ fontSize:"11px", fontWeight:"600", color:"#64748B", display:"block", marginBottom:"6px", letterSpacing:"0.06em" }}>
-          E-MAILADRES <span style={{ color:"#475569", fontWeight:"400" }}>(verborgen voor privacy)</span>
-        </label>
-        {/* type="password" zodat e-mail niet over de schouder meegelezen kan worden */}
-        <input type="password" autoComplete="off" value={email} onChange={e => setEmail(e.target.value)} placeholder="••••••••@bedrijf.nl"
-          style={{ width:"100%", padding:"10px 14px", background:"#1e293b", color:"white", border:"1px solid #334155", borderRadius:"8px", fontSize:"13px", boxSizing:"border-box", outline:"none", fontFamily:"monospace" }}/>
-        <div style={{ fontSize:"10px", color:"#374151", marginTop:"5px" }}>Het e-mailadres is bewust verborgen. De uitnodigingsmail wordt op de achtergrond verstuurd.</div>
-      </div>
-
-      <div style={{ display:"flex", alignItems:"center", gap:"10px", marginBottom:"24px", background:"#1e293b", borderRadius:"8px", padding:"12px 14px" }}>
-        <button onClick={() => setIsAdmin(v => !v)} style={{ background:"none", border:"none", cursor:"pointer", padding:0, display:"flex" }}>
-          {isAdmin ? <ToggleRight size={28} color="#8B5CF6"/> : <ToggleLeft size={28} color="#475569"/>}
-        </button>
-        <div>
-          <div style={{ fontSize:"13px", color:isAdmin?"#C4B5FD":"#94A3B8", fontWeight:"600" }}>{isAdmin?"Beheerder":"Planner"}</div>
-          <div style={{ fontSize:"11px", color:"#475569" }}>{isAdmin?"Toegang tot financieel beheer en gebruikersbeheer":"Alleen planning en medewerkers beheren"}</div>
-        </div>
-      </div>
-
-      {status && (
-        <div style={{ background:status.type==="ok"?"rgba(16,185,129,0.1)":"rgba(239,68,68,0.1)", border:`1px solid ${status.type==="ok"?"rgba(16,185,129,0.3)":"rgba(239,68,68,0.3)"}`, color:status.type==="ok"?"#6EE7B7":"#FCA5A5", borderRadius:"8px", padding:"10px 14px", marginBottom:"16px", fontSize:"13px" }}>
-          {status.msg}
-        </div>
-      )}
-
-      <button onClick={addUser} disabled={loading}
-        style={{ width:"100%", padding:"11px", background:"#8B5CF6", border:"none", color:"white", borderRadius:"8px", fontWeight:"700", cursor:loading?"wait":"pointer", opacity:loading?0.7:1 }}>
-        {loading?"Versturen...":"✉️ Stuur uitnodiging"}
-      </button>
-    </div>
-  );
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// HOOFD APP
-// ═════════════════════════════════════════════════════════════════════════════
+// ─── Hoofd App ───────────────────────────────────────────────────────────────
 function App({ session }: { session: Session }) {
   const [activeTab, setActiveTab] = useState<"planning"|"medewerkers"|"beheer"|"financieel"|"admin">("planning");
 
-  const [depts,     setDepts]     = useState<Department[]>(SEED_DEPTS);
-  const [skills,    setSkills]    = useState<Skill[]>(SEED_SKILLS);
-  const [shiftDefs, setShiftDefs] = useState<ShiftDef[]>(SEED_SHIFTS);
-  const [clients,   setClients]   = useState<Client[]>(SEED_CLIENTS);
-  const [subcats,   setSubcats]   = useState<Subcategory[]>(SEED_SUBCATS);
-  const [employees, setEmployees] = useState<Employee[]>(SEED_EMPS);
-  const [schedule,  setSchedule]  = useState<Record<string,SlotEntry>>({});
+  const [depts,     setDeptsState]     = useState<Department[]>([]);
+  const [skills,    setSkillsState]    = useState<Skill[]>([]);
+  const [shiftDefs, setShiftDefsState] = useState<ShiftDef[]>([]);
+  const [clients,   setClientsState]   = useState<Client[]>([]);
+  const [subcats,   setSubcatsState]   = useState<Subcategory[]>([]);
+  const [employees, setEmployees]      = useState<Employee[]>([]);
+  const [schedule,  setSchedule]       = useState<Record<string,SlotEntry>>({});
 
-  const [activeDeptId,   setActiveDeptId]   = useState("d1");
+  const [activeDeptId,   setActiveDeptId]   = useState("");
   const [viewType,       setViewType]       = useState<"week"|"maand">("week");
   const [useFTE,         setUseFTE]         = useState(true);
   const [printSize,      setPrintSize]      = useState<"A4"|"A3">("A4");
@@ -324,16 +208,11 @@ function App({ session }: { session: Session }) {
   const [customEnd,       setCustomEnd]       = useState(17);
   const [showCalcFor,     setShowCalcFor]     = useState<string|null>(null);
 
-  // Be// Bepaal of de huidige gebruiker een admin is
-const currentUserId = "dc959614-bc92-482b-be5c-66b1d22ac424"; // De ID van de ingelogde gebruiker
+  const currentUserId = session.user.id;
+  const currentEmp    = employees.find(e => e.id === currentUserId) ?? employees.find(e => e.isAdmin);
+  const isAdmin       = currentEmp?.isAdmin ?? false;
 
-const currentEmp = employees.find(e => e.id === currentUserId) || 
-                   employees.find(e => e.isAdmin); // Fallback naar de eerste admin voor test-data/seed
-
-// Let op: 'treu' moet 'true' of 'false' zijn. Meestal zet je dit op 'false' voor veiligheid.
-const isAdmin = currentEmp?.isAdmin ?? false;
-
-  // ── SUPABASE LOAD ──────────────────────────────────────────────────────
+  // ── Data laden uit Supabase ──────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -347,34 +226,35 @@ const isAdmin = currentEmp?.isAdmin ?? false;
           sb.from("employees").select("*"),
           sb.from("schedule").select("*"),
         ]);
-        if (dr.data?.length)  setDepts(dr.data.map((x:any) => ({id:x.id,name:x.name})));
-        if (skr.data?.length) setSkills(skr.data.map((x:any) => ({id:x.id,name:x.name,criteria:x.criteria||""})));
-        if (shr.data?.length) setShiftDefs(shr.data.map((x:any) => ({id:x.id,label:x.label,hours:x.hours||[]})));
-        if (cr.data?.length)  setClients(cr.data.map((x:any) => ({id:x.id,name:x.name,departmentId:x.department_id,fteNeeded:x.fte_needed||1})));
-        if (scr.data?.length) setSubcats(scr.data.map((x:any) => ({id:x.id,clientId:x.client_id,name:x.name,targetSkills:x.target_skills||[]})));
-        if (er.data?.length)  setEmployees(er.data.map((x:any) => ({
+        if (dr.data?.length)   setDeptsState(dr.data.map((x:any) => ({ id:x.id, name:x.name })));
+        if (skr.data?.length)  setSkillsState(skr.data.map((x:any) => ({ id:x.id, name:x.name, criteria:x.criteria||"" })));
+        if (shr.data?.length)  setShiftDefsState(shr.data.map((x:any) => ({ id:x.id, label:x.label, hours:x.hours||[] })));
+        if (cr.data?.length)   setClientsState(cr.data.map((x:any) => ({ id:x.id, name:x.name, departmentId:x.department_id, fteNeeded:x.fte_needed||1 })));
+        if (scr.data?.length)  setSubcatsState(scr.data.map((x:any) => ({ id:x.id, clientId:x.client_id, name:x.name, targetSkills:x.target_skills||[] })));
+        if (er.data?.length)   setEmployees(er.data.map((x:any) => ({
           id:x.id, name:x.name, departmentId:x.department_id,
           hoursPerWeek:x.hours_per_week||40, mainClientId:x.main_client_id||"",
           subCatIds:x.sub_cat_ids||[], subCatSkills:x.sub_cat_skills||{},
           standardOffDays:x.standard_off_days||[], vacationDates:x.vacation_dates||[],
           defaultShiftId:x.default_shift_id||"", hourlyWage:x.hourly_wage||0,
-          isAdmin:x.is_admin||false
+          isAdmin:x.is_admin||false, color:x.color||EMPLOYEE_COLORS[0],
+          breaks:x.breaks||[],
         })));
         if (schr.data?.length) {
           const built: Record<string,SlotEntry> = {};
-          schr.data.forEach((x:any) => { built[x.slot_id]={rows:x.rows||[]}; });
+          schr.data.forEach((x:any) => { built[x.slot_id] = { rows:x.rows||[] }; });
           setSchedule(built);
         }
         if (dr.data?.length) setActiveDeptId(dr.data[0].id);
-      } catch(e) { console.warn("Supabase not configured, using seed data:", e); }
+      } catch(e) { console.warn("Supabase niet bereikbaar:", e); }
       setLoading(false);
     })();
   }, []);
 
-  // ── SYNC ──────────────────────────────────────────────────────────────
+  // ── Sync helpers ─────────────────────────────────────────────────────────
   const _syncCell = useCallback(async (slotId: string, entry: SlotEntry) => {
-    try { await sb.from("schedule").upsert({slot_id:slotId,rows:entry.rows,updated_at:new Date().toISOString()},{onConflict:"slot_id"}); }
-    catch(e) { console.error("sync error",e); }
+    try { await sb.from("schedule").upsert({ slot_id:slotId, rows:entry.rows, updated_at:new Date().toISOString() }, { onConflict:"slot_id" }); }
+    catch(e) { console.error("schedule sync fout", e); }
   }, []);
   const syncCell = useDebounce(_syncCell, 800);
 
@@ -386,22 +266,86 @@ const isAdmin = currentEmp?.isAdmin ?? false;
         sub_cat_ids:emp.subCatIds, sub_cat_skills:emp.subCatSkills,
         standard_off_days:emp.standardOffDays, vacation_dates:emp.vacationDates,
         default_shift_id:emp.defaultShiftId||null, hourly_wage:emp.hourlyWage||0,
-        is_admin:emp.isAdmin||false
-      },{onConflict:"id"});
-    } catch(e) { console.error("emp sync error",e); }
+        is_admin:emp.isAdmin||false, color:emp.color||EMPLOYEE_COLORS[0],
+        breaks:emp.breaks||[],
+      }, { onConflict:"id" });
+    } catch(e) { console.error("employee sync fout", e); }
   }, []);
   const syncEmployee = useDebounce(_syncEmp, 1000);
 
+  const _syncDept = useCallback(async (dept: Department) => {
+    try { await sb.from("departments").upsert({ id:dept.id, name:dept.name }, { onConflict:"id" }); }
+    catch(e) { console.error("dept sync fout", e); }
+  }, []);
+  const syncDept = useDebounce(_syncDept, 1000);
+
+  const _syncSkill = useCallback(async (skill: Skill) => {
+    try { await sb.from("skills").upsert({ id:skill.id, name:skill.name, criteria:skill.criteria }, { onConflict:"id" }); }
+    catch(e) { console.error("skill sync fout", e); }
+  }, []);
+  const syncSkill = useDebounce(_syncSkill, 1000);
+
+  const _syncClient = useCallback(async (client: Client) => {
+    try { await sb.from("clients").upsert({ id:client.id, name:client.name, department_id:client.departmentId, fte_needed:client.fteNeeded }, { onConflict:"id" }); }
+    catch(e) { console.error("client sync fout", e); }
+  }, []);
+  const syncClient = useDebounce(_syncClient, 1000);
+
+  const _syncSubcat = useCallback(async (sub: Subcategory) => {
+    try { await sb.from("subcategories").upsert({ id:sub.id, client_id:sub.clientId, name:sub.name, target_skills:sub.targetSkills }, { onConflict:"id" }); }
+    catch(e) { console.error("subcat sync fout", e); }
+  }, []);
+  const syncSubcat = useDebounce(_syncSubcat, 1000);
+
+  const _syncShift = useCallback(async (sh: ShiftDef) => {
+    try { await sb.from("shift_defs").upsert({ id:sh.id, label:sh.label, hours:sh.hours }, { onConflict:"id" }); }
+    catch(e) { console.error("shift sync fout", e); }
+  }, []);
+  const syncShift = useDebounce(_syncShift, 1000);
+
+  // ── Update functies ──────────────────────────────────────────────────────
   function updSchedule(slotId: string, entry: SlotEntry) {
-    setSchedule(prev => ({...prev,[slotId]:entry}));
+    setSchedule(prev => ({ ...prev, [slotId]:entry }));
     syncCell(slotId, entry);
   }
   function updEmployee(emp: Employee) {
-    setEmployees(prev => prev.map(e => e.id===emp.id?emp:e));
+    setEmployees(prev => prev.map(e => e.id===emp.id ? emp : e));
     syncEmployee(emp);
   }
+  function setDepts(fn: (prev: Department[]) => Department[]) { setDeptsState(fn); }
+  function setSkills(fn: (prev: Skill[]) => Skill[]) { setSkillsState(fn); }
+  function setClients(fn: (prev: Client[]) => Client[]) { setClientsState(fn); }
+  function setSubcats(fn: (prev: Subcategory[]) => Subcategory[]) { setSubcatsState(fn); }
+  function setShiftDefs(fn: (prev: ShiftDef[]) => ShiftDef[]) { setShiftDefsState(fn); }
 
-  // ── DATUMS ────────────────────────────────────────────────────────────
+  async function deleteDept(id: string) {
+    setDeptsState(prev => prev.filter(d => d.id !== id));
+    await sb.from("departments").delete().eq("id", id);
+  }
+  async function deleteSkill(id: string) {
+    setSkillsState(prev => prev.filter(s => s.id !== id));
+    await sb.from("skills").delete().eq("id", id);
+  }
+  async function deleteClient(id: string) {
+    setClientsState(prev => prev.filter(c => c.id !== id));
+    setSubcatsState(prev => prev.filter(s => s.clientId !== id));
+    await sb.from("clients").delete().eq("id", id);
+    await sb.from("subcategories").delete().eq("client_id", id);
+  }
+  async function deleteSubcat(id: string) {
+    setSubcatsState(prev => prev.filter(s => s.id !== id));
+    await sb.from("subcategories").delete().eq("id", id);
+  }
+  async function deleteShift(id: string) {
+    setShiftDefsState(prev => prev.filter(s => s.id !== id));
+    await sb.from("shift_defs").delete().eq("id", id);
+  }
+  async function deleteEmployee(id: string) {
+    setEmployees(prev => prev.filter(e => e.id !== id));
+    await sb.from("employees").delete().eq("id", id);
+  }
+
+  // ── Navigatie ────────────────────────────────────────────────────────────
   function displayDates(): Date[] {
     if (viewType==="maand") return datesInMonth(viewMonth, viewYear);
     return Array.from({length:7}, (_,i) => { const d=new Date(weekStart); d.setDate(weekStart.getDate()+i); return d; });
@@ -417,11 +361,14 @@ const isAdmin = currentEmp?.isAdmin ?? false;
     else setViewMonth(m=>m+1);
   }
 
-  // ── HELPERS ───────────────────────────────────────────────────────────
+  // ── Planning helpers ─────────────────────────────────────────────────────
   function isAvail(emp: Employee, date: Date): boolean {
     if (emp.standardOffDays.includes(dayLabel(date))) return false;
     if (emp.vacationDates.includes(fmtDate(date))) return false;
     return true;
+  }
+  function isWeekend(date: Date): boolean {
+    return date.getDay() === 0 || date.getDay() === 6;
   }
   function dailyHours(emp: Employee): number {
     const wd = 7 - emp.standardOffDays.length;
@@ -433,18 +380,33 @@ const isAdmin = currentEmp?.isAdmin ?? false;
   }
   function calcScore(emp: Employee, sub: Subcategory): number {
     if (!sub.targetSkills.length) return 0;
-    const mx = emp.subCatSkills[sub.id]||{};
+    const mx   = emp.subCatSkills[sub.id]||{};
     const vals = sub.targetSkills.map(sid => { const v=mx[sid]; return (typeof v==="number"&&!isNaN(v))?v:0; });
     return Math.round(vals.reduce((a,b)=>a+b,0)/vals.length);
   }
   function getShift(shiftId: string): ShiftDef|undefined { return shiftDefs.find(s => s.id===shiftId); }
 
-  /**
-   * FTE BEREKENING:
-   * 1 uniek persoon per dag = 1 FTE-dag.
-   * We tellen hoeveel unieke persoon-dagen er zijn in de geselecteerde periode,
-   * gedeeld door 5 werkdagen = FTE.
-   */
+  // ── Uurberekening strikt per week (niet per weergave-periode) ────────────
+  function geplandUrenDezeWeek(empId: string, referenceDate: Date): number {
+    const sw = startOfWeek(referenceDate);
+    let total = 0;
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(sw); d.setDate(sw.getDate() + i);
+      const ds = fmtDate(d);
+      const emp = employees.find(e => e.id === empId);
+      Object.entries(schedule)
+        .filter(([slotId]) => slotId.startsWith(ds))
+        .forEach(([,entry]) => {
+          entry.rows?.forEach(r => {
+            if (r.employeeId === empId) {
+              total += emp ? nettoUrenEmp(emp, r.selectedHours) : nettoUren(r.selectedHours);
+            }
+          });
+        });
+    }
+    return total;
+  }
+
   function fteForClient(clientId: string): number {
     const dates = displayDates();
     const csubs = subcats.filter(s => s.clientId===clientId);
@@ -463,49 +425,25 @@ const isAdmin = currentEmp?.isAdmin ?? false;
       }
       uniquePersonDays += seen.size;
     });
-    // Normaliseer naar 5 werkdagen per week
     const workingDays = dates.filter(d => d.getDay()!==0 && d.getDay()!==6).length || 5;
     return uniquePersonDays / workingDays;
   }
 
-  /**
-   * KOSTENBEREKENING per slot:
-   * Kosten worden verdeeld naar rato van gewerkte uren over klanten/subcats.
-   */
-  function kostenVoorSlot(slotId: string, rows?: SlotRow[]): number {
-    const entry = rows ? {rows} : schedule[slotId];
-    if (!entry?.rows) return 0;
-    let total = 0;
-    entry.rows.forEach(row => {
-      const emp = employees.find(e => e.id===row.employeeId);
-      if (!emp) return;
-      total += nettoUren(row.selectedHours) * (emp.hourlyWage||0);
-    });
-    return total;
-  }
-
-  function geplandUrenDezePeriode(empId: string): number {
-    const dates = displayDates(); let total = 0;
-    dates.forEach(date => {
-      const ds = fmtDate(date);
-      Object.entries(schedule)
-        .filter(([slotId]) => slotId.startsWith(ds))
-        .forEach(([,entry]) => {
-          entry.rows?.forEach(r => { if (r.employeeId===empId) total += nettoUren(r.selectedHours); });
-        });
-    });
-    return total;
-  }
-
-  // ── AUTO PLANNER ──────────────────────────────────────────────────────
+  // ── Auto planner ─────────────────────────────────────────────────────────
   function runAutoPlanner() {
     const dates    = displayDates();
     const dClients = clients.filter(c => c.departmentId===activeDeptId);
     const dEmps    = employees.filter(e => e.departmentId===activeDeptId);
     const newSched = {...schedule};
+    // Tijdelijke urenteller per week per medewerker
+    const weeklyHoursTracker: Record<string, Record<string, number>> = {};
 
     dates.forEach(date => {
+      // Auto-planner slaat altijd weekend over
+      if (isWeekend(date)) return;
+
       const ds = fmtDate(date);
+      const weekKey = getWeekKey(date);
       const usedToday: string[] = [];
 
       dClients.forEach(client => {
@@ -513,40 +451,39 @@ const isAdmin = currentEmp?.isAdmin ?? false;
         const slots = csubs.length
           ? csubs.map(s => [`${ds}-${s.id}`, s] as [string, Subcategory])
           : [[`${ds}-client-${client.id}`, null] as [string, null]];
-
         slots.forEach(([slotId, sub]) => {
           if (newSched[slotId]?.rows?.length) return;
-
           const candidates = dEmps.filter(e => {
             if (!isAvail(e, date)) return false;
             if (usedToday.includes(e.id)) return false;
             if (sub && !e.subCatIds.includes(sub.id)) return false;
+            // Check weeklimieten
+            if (!weeklyHoursTracker[weekKey]) weeklyHoursTracker[weekKey] = {};
+            const alreadyPlanned = (weeklyHoursTracker[weekKey][e.id] || 0) + geplandUrenDezeWeek(e.id, date);
+            if (alreadyPlanned >= e.hoursPerWeek) return false;
             return true;
           }).sort((a,b) => {
             const as_ = sub ? calcScore(a,sub) : 0;
             const bs_ = sub ? calcScore(b,sub) : 0;
             return (bs_+(b.mainClientId===client.id?1000:0)) - (as_+(a.mainClientId===client.id?1000:0));
           });
-
           if (candidates[0]) {
             const emp = candidates[0];
             usedToday.push(emp.id);
+            // Gebruik defaultShiftId van de medewerker
             const chosenShift = (emp.defaultShiftId ? getShift(emp.defaultShiftId) : undefined) || shiftDefs[1] || shiftDefs[0];
-            newSched[slotId] = { rows:[{
-              employeeId: emp.id,
-              shiftId: chosenShift?.id || "sh2",
-              selectedHours: chosenShift?.hours || defaultHours(emp)
-            }]};
+            if (!weeklyHoursTracker[weekKey]) weeklyHoursTracker[weekKey] = {};
+            weeklyHoursTracker[weekKey][emp.id] = (weeklyHoursTracker[weekKey][emp.id] || 0) + nettoUrenEmp(emp, chosenShift?.hours || []);
+            newSched[slotId] = { rows:[{ employeeId:emp.id, shiftId:chosenShift?.id||"sh2", selectedHours:chosenShift?.hours||defaultHours(emp) }] };
           }
         });
       });
     });
-
     setSchedule(newSched);
     Object.entries(newSched).forEach(([sid,e]) => syncCell(sid,e));
   }
 
-  // ── PRINT ─────────────────────────────────────────────────────────────
+  // ── Print ────────────────────────────────────────────────────────────────
   function handlePrint() {
     const style = document.createElement("style");
     style.innerHTML = buildPrintCSS(printSize);
@@ -555,36 +492,32 @@ const isAdmin = currentEmp?.isAdmin ?? false;
     setTimeout(() => document.head.removeChild(style), 1500);
   }
 
-  // ── FILTERED DATA ─────────────────────────────────────────────────────
   const deptClients   = clients.filter(c => c.departmentId===activeDeptId);
   const deptEmployees = employees.filter(e => e.departmentId===activeDeptId);
   const activeDept    = depts.find(d => d.id===activeDeptId);
 
-  // ── VACATION CELLS ────────────────────────────────────────────────────
   function vacCells(): (Date|null)[] {
-    const dates = datesInMonth(vacModalMonth, vacModalYear);
+    const dates  = datesInMonth(vacModalMonth, vacModalYear);
     const offset = (() => { const fd=new Date(vacModalYear,vacModalMonth,1).getDay(); return fd===0?6:fd-1; })();
     const cells: (Date|null)[] = Array(offset).fill(null).concat(dates);
     while (cells.length%7!==0) cells.push(null);
     return cells;
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // PLANNING CELL
-  // ═══════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════════
+  // SUB-COMPONENTEN
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ── Planning cel ─────────────────────────────────────────────────────────
   function PlanningCell({ slotId, date, avail }: { slotId:string; date:Date; avail:Employee[] }) {
     const entry = schedule[slotId] || { rows:[] };
-
-    // Filter al-gekozen medewerkers uit de dropdown van andere rijen
     function availForRow(rowIdx: number): Employee[] {
       const usedIds = entry.rows.filter((_,i) => i!==rowIdx).map(r => r.employeeId).filter(Boolean);
       return avail.filter(e => !usedIds.includes(e.id));
     }
-
-    function isOverLimit(emp: Employee): boolean {
-      return geplandUrenDezePeriode(emp.id) >= emp.hoursPerWeek;
+    function isOverLimit(emp: Employee, date: Date): boolean {
+      return geplandUrenDezeWeek(emp.id, date) >= emp.hoursPerWeek;
     }
-
     function addRow() {
       if (entry.rows.length>=2) return;
       const used  = entry.rows.map(r => r.employeeId);
@@ -613,31 +546,31 @@ const isAdmin = currentEmp?.isAdmin ?? false;
       rows[i] = {...rows[i], shiftId:"custom", selectedHours:hrs.includes(h)?hrs.filter(x=>x!==h):[...hrs,h].sort((a,b)=>a-b)};
       updSchedule(slotId, {rows});
     }
-
     return (
       <td style={{ padding:"3px", verticalAlign:"top", minWidth:"175px", borderBottom:"1px solid #1e293b" }}>
         {entry.rows.map((row,ri) => {
-          const rowColor  = ri===0 ? "#3B82F6" : "#7C3AED";
           const emp       = employees.find(e => e.id===row.employeeId);
-          const overLimit = emp ? isOverLimit(emp) : false;
-          const netto     = nettoUren(row.selectedHours);
+          const empColor  = emp?.color || (ri===0 ? "#3B82F6" : "#7C3AED");
+          const textCol   = emp ? contrastColor(empColor) : "white";
+          const overLimit = emp ? isOverLimit(emp, date) : false;
+          const netto     = emp ? nettoUrenEmp(emp, row.selectedHours) : nettoUren(row.selectedHours);
           const bruto     = row.selectedHours?.length || 0;
           return (
             <div key={ri} style={{ marginBottom:ri<entry.rows.length-1?"4px":0, borderBottom:ri<entry.rows.length-1?"1px dashed #1e293b":"none", paddingBottom:ri<entry.rows.length-1?"4px":0 }}>
               <div style={{ display:"flex", gap:"2px", marginBottom:"2px" }}>
                 <select value={row.employeeId} onChange={e => setEmp(ri,e.target.value)}
-                  style={{ flex:1, padding:"4px 3px", borderRadius:"4px", background:row.employeeId?rowColor:"#0f172a", color:"white", border:overLimit?"2px solid #EF4444":"1px solid #1e293b", fontSize:"11px", cursor:"pointer" }}>
+                  style={{ flex:1, padding:"4px 3px", borderRadius:"4px", background:row.employeeId?empColor:"#0f172a", color:row.employeeId?textCol:"white", border:overLimit?"2px solid #EF4444":"1px solid #1e293b", fontSize:"11px", cursor:"pointer", fontWeight:row.employeeId?"700":"400" }}>
                   <option value="">—</option>
                   {availForRow(ri).map(e => {
-                    const ol = isOverLimit(e);
-                    return <option key={e.id} value={e.id} style={{ color:ol?"#EF4444":"white" }}>{e.name}{ol?" ⚠":"" }</option>;
+                    const ol = isOverLimit(e, date);
+                    return <option key={e.id} value={e.id} style={{ color:ol?"#EF4444":"white", background:"#1e293b" }}>{e.name}{ol?" ⚠":""}</option>;
                   })}
                 </select>
                 <button onClick={() => removeRow(ri)} style={{ background:"#1e293b", border:"none", color:"#475569", borderRadius:"3px", width:"18px", cursor:"pointer", fontSize:"10px" }}>✕</button>
               </div>
               {overLimit && row.employeeId && (
                 <div style={{ fontSize:"9px", color:"#EF4444", marginBottom:"2px", display:"flex", alignItems:"center", gap:"3px" }}>
-                  <AlertTriangle size={9}/> Contracturen overschreden
+                  <AlertTriangle size={9}/> Weekuren overschreden
                 </div>
               )}
               {row.employeeId && (
@@ -656,12 +589,16 @@ const isAdmin = currentEmp?.isAdmin ?? false;
                 {WORK_HOURS.map(h => {
                   const on = row.selectedHours?.includes(h);
                   return <div key={h} onClick={() => row.employeeId && toggleHour(ri,h)} title={`${String(h).padStart(2,"0")}:00`}
-                    style={{ flex:1, height:"11px", borderRadius:"1px", cursor:row.employeeId?"pointer":"default", background:on?(ri===0?"#10B981":"#A78BFA"):"#1e293b" }}/>;
+                    style={{ flex:1, height:"11px", borderRadius:"1px", cursor:row.employeeId?"pointer":"default", background:on?empColor:"#1e293b" }}/>;
                 })}
               </div>
               {row.employeeId && (
                 <div style={{ fontSize:"9px", textAlign:"right", color:"#475569", marginTop:"1px" }}>
-                  {netto}u netto{bruto>=9 && <span style={{ color:"#F59E0B" }}> (−1u pauze)</span>}
+                  {netto.toFixed(1)}u netto
+                  {emp && emp.breaks && emp.breaks.length > 0 && (
+                    <span style={{ color:"#F59E0B" }}> (−{totalBreakMinutes(emp, row.selectedHours)}min pauze)</span>
+                  )}
+                  {(!emp?.breaks || emp.breaks.length === 0) && bruto>=9 && <span style={{ color:"#F59E0B" }}> (−1u pauze)</span>}
                 </div>
               )}
             </div>
@@ -676,239 +613,7 @@ const isAdmin = currentEmp?.isAdmin ?? false;
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // FINANCIEEL TAB
-  // ═══════════════════════════════════════════════════════════════════════
-  function TabFinancieel() {
-    const dates    = displayDates();
-    const allDates = viewType==="week" ? dates : dates;
-
-    // Totale kosten per klant
-    const kostenPerKlant: Record<string,{naam:string;kosten:number;subcats:Record<string,{naam:string;kosten:number;details:{empNaam:string;bruto:number;netto:number;loon:number;kosten:number}[]}>}> = {};
-
-    clients.forEach(client => {
-      const csubs = subcats.filter(s => s.clientId===client.id);
-      kostenPerKlant[client.id] = { naam:client.name, kosten:0, subcats:{} };
-
-      (csubs.length ? csubs : [{id:`client-${client.id}`,clientId:client.id,name:"Algemeen",targetSkills:[]}]).forEach(sub => {
-        kostenPerKlant[client.id].subcats[sub.id] = { naam:sub.name, kosten:0, details:[] };
-
-        allDates.forEach(date => {
-          const slotId = `${fmtDate(date)}-${sub.id}`;
-          const entry  = schedule[slotId];
-          if (!entry?.rows) return;
-
-          entry.rows.forEach(row => {
-            const emp = employees.find(e => e.id===row.employeeId);
-            if (!emp) return;
-            const bruto = row.selectedHours?.length || 0;
-            const netto = nettoUren(row.selectedHours);
-            const kosten = netto * (emp.hourlyWage || 0);
-            kostenPerKlant[client.id].kosten += kosten;
-            kostenPerKlant[client.id].subcats[sub.id].kosten += kosten;
-            kostenPerKlant[client.id].subcats[sub.id].details.push({
-              empNaam:emp.name, bruto, netto, loon:emp.hourlyWage||0, kosten
-            });
-          });
-        });
-      });
-    });
-
-    const totalKosten = Object.values(kostenPerKlant).reduce((a,c) => a+c.kosten, 0);
-
-    // Schatting maand/jaar (extrapoleer vanuit week)
-    const weekFactor  = viewType==="week" ? 1 : allDates.length/7;
-    const maandSchat  = (totalKosten / weekFactor) * (52/12);
-    const jaarSchat   = (totalKosten / weekFactor) * 52;
-
-    return (
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))", gap:"20px" }}>
-        {/* KPI kaarten */}
-        <div style={{ gridColumn:"1/-1", display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:"14px" }}>
-          {[
-            { label:"Deze periode", value:fmtEuro(totalKosten), icon:<Euro size={18}/>, color:"#3B82F6" },
-            { label:"Schatting per maand", value:fmtEuro(maandSchat), icon:<TrendingUp size={18}/>, color:"#10B981" },
-            { label:"Schatting per jaar",  value:fmtEuro(jaarSchat),  icon:<PieChart size={18}/>, color:"#8B5CF6" },
-          ].map(kpi => (
-            <div key={kpi.label} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:"14px", padding:"20px" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:"8px", marginBottom:"12px" }}>
-                <div style={{ color:kpi.color }}>{kpi.icon}</div>
-                <span style={{ fontSize:"12px", color:"#64748B", fontWeight:"600", letterSpacing:"0.04em" }}>{kpi.label.toUpperCase()}</span>
-              </div>
-              <div style={{ fontSize:"26px", fontWeight:"800", color:"white", letterSpacing:"-0.5px" }}>{kpi.value}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Looninvoer per medewerker */}
-        <section style={{ background:"#0f172a", borderRadius:"14px", padding:"22px", border:"1px solid #1e293b" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:"8px", marginBottom:"18px" }}>
-            <Users size={17} color="#F59E0B"/>
-            <h3 style={{ margin:0, color:"white", fontSize:"14px", fontWeight:"700" }}>Uurlonen beheren</h3>
-          </div>
-          {employees.map(emp => (
-            <div key={emp.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:"#1e293b", borderRadius:"8px", padding:"10px 14px", marginBottom:"8px" }}>
-              <div>
-                <div style={{ fontSize:"13px", fontWeight:"600", color:"white" }}>{emp.name}</div>
-                <div style={{ fontSize:"10px", color:"#64748B" }}>{depts.find(d=>d.id===emp.departmentId)?.name}</div>
-              </div>
-              <div style={{ display:"flex", alignItems:"center", gap:"6px" }}>
-                <span style={{ color:"#64748B", fontSize:"13px" }}>€</span>
-                <input type="number" step="0.01" min="0" value={emp.hourlyWage||0}
-                  onChange={e => updEmployee({...emp, hourlyWage:parseFloat(e.target.value)||0})}
-                  style={{ width:"70px", background:"#0f172a", color:"white", border:"1px solid #334155", borderRadius:"6px", padding:"5px 8px", textAlign:"right", fontSize:"13px", fontWeight:"600" }}/>
-                <span style={{ color:"#64748B", fontSize:"11px" }}>/uur</span>
-              </div>
-            </div>
-          ))}
-        </section>
-
-        {/* Kosten per klant */}
-        <section style={{ background:"#0f172a", borderRadius:"14px", padding:"22px", border:"1px solid #1e293b", gridColumn:"span 2" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:"8px", marginBottom:"18px" }}>
-            <Building2 size={17} color="#38BDF8"/>
-            <h3 style={{ margin:0, color:"white", fontSize:"14px", fontWeight:"700" }}>Kosten per klant & subcategorie</h3>
-          </div>
-
-          {Object.values(kostenPerKlant).map(clientData => (
-            <div key={clientData.naam} style={{ marginBottom:"20px", background:"#1e293b", borderRadius:"10px", overflow:"hidden" }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", background:"#172033", borderBottom:"1px solid #0f172a" }}>
-                <span style={{ fontWeight:"700", color:"#38BDF8", fontSize:"14px" }}>{clientData.naam}</span>
-                <span style={{ fontWeight:"700", color:"white", fontSize:"15px" }}>{fmtEuro(clientData.kosten)}</span>
-              </div>
-              {Object.values(clientData.subcats).map(subData => (
-                <div key={subData.naam}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 16px 10px 28px", borderBottom:"1px solid #0f172a" }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
-                      <span style={{ color:"#64748B", fontSize:"11px" }}>↳</span>
-                      <span style={{ color:"#94A3B8", fontSize:"13px" }}>{subData.naam}</span>
-                    </div>
-                    <div style={{ display:"flex", alignItems:"center", gap:"10px" }}>
-                      <span style={{ color:"#94A3B8", fontSize:"13px", fontWeight:"600" }}>{fmtEuro(subData.kosten)}</span>
-                      <button onClick={() => setShowCalcFor(prev => prev===subData.naam?null:subData.naam)}
-                        style={{ background:"#0f172a", border:"1px solid #334155", color:"#64748B", borderRadius:"5px", padding:"3px 8px", fontSize:"10px", cursor:"pointer", display:"flex", alignItems:"center", gap:"4px" }}>
-                        {showCalcFor===subData.naam ? <EyeOff size={11}/> : <Eye size={11}/>}
-                        Berekening
-                      </button>
-                    </div>
-                  </div>
-                  {showCalcFor===subData.naam && subData.details.length>0 && (
-                    <div style={{ padding:"12px 28px", background:"rgba(0,0,0,0.2)", borderBottom:"1px solid #0f172a" }}>
-                      {subData.details.map((d,i) => (
-                        <div key={i} style={{ fontSize:"11px", color:"#64748B", marginBottom:"4px", fontFamily:"monospace" }}>
-                          <span style={{ color:"#94A3B8" }}>{d.empNaam}</span>:&nbsp;
-                          {d.bruto>0 && d.bruto!==d.netto ? (
-                            <><span style={{ color:"#F59E0B" }}>{d.bruto} blokjes</span> − 1u pauze = <span style={{ color:"#10B981" }}>{d.netto}u</span></>
-                          ) : (
-                            <span style={{ color:"#10B981" }}>{d.netto}u</span>
-                          )}
-                          &nbsp;× {fmtEuro(d.loon)} = <span style={{ color:"white", fontWeight:"bold" }}>{fmtEuro(d.kosten)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          ))}
-        </section>
-      </div>
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // PRINT VIEW
-  // ═══════════════════════════════════════════════════════════════════════
-  function PrintView() {
-    const allDates = displayDates();
-    const weeks    = viewType==="maand" ? groupByWeek(allDates) : [allDates];
-    return (
-      <div className="print-wrap" style={{ display:"none" }}>
-        {weeks.map((weekDates,wi) => (
-          <div key={wi} className="pw-page">
-            <div className="pw-header">
-              <div>
-                <div className="pw-title">{activeDept?.name} — Planning {MONTH_LABELS[viewMonth]} {viewYear}</div>
-                <div className="pw-sub">
-                  Week {weekNum(weekDates[0])}{weekDates.length>1&&` – ${weekNum(weekDates[weekDates.length-1])}`}
-                  &nbsp;·&nbsp;{weekDates[0].toLocaleDateString("nl-NL",{day:"numeric",month:"short"})} –&nbsp;
-                  {weekDates[weekDates.length-1].toLocaleDateString("nl-NL",{day:"numeric",month:"short",year:"numeric"})}
-                </div>
-              </div>
-              <div className="pw-meta">
-                <div>Gedrukt: {new Date().toLocaleDateString("nl-NL")}</div>
-                <div>{activeDept?.name} · {deptEmployees.length} mw · {deptClients.length} klanten</div>
-              </div>
-            </div>
-            <table className="pw-tbl">
-              <thead>
-                <tr>
-                  <th className="col-label" style={{ textAlign:"left" }}>Klant / Taak</th>
-                  {weekDates.map(date => {
-                    const isWE = date.getDay()===0||date.getDay()===6;
-                    return <th key={fmtDate(date)} className="col-day" style={{ color:isWE?"#fca5a5":"#f8fafc" }}>
-                      {dayLabel(date).slice(0,2)} {date.getDate()}/{date.getMonth()+1}
-                    </th>;
-                  })}
-                </tr>
-              </thead>
-              <tbody>
-                {deptClients.map(client => {
-                  const csubs   = subcats.filter(s => s.clientId===client.id);
-                  const fte     = fteForClient(client.id);
-                  const fteDiff = fte - client.fteNeeded;
-                  return (
-                    <React.Fragment key={client.id}>
-                      <tr className="client-hdr">
-                        <td colSpan={weekDates.length+1}>
-                          {client.name}
-                          {useFTE && <span style={{ marginLeft:"10px", fontSize:"4.5pt", opacity:0.8 }}>
-                            Doel: {client.fteNeeded} FTE · Ingepland: {fte.toFixed(2)} FTE
-                            <span className={fteDiff>=0?"pw-fte-ok":"pw-fte-low"}> ({fteDiff>=0?"+":""}{fteDiff.toFixed(2)})</span>
-                          </span>}
-                        </td>
-                      </tr>
-                      {(csubs.length?csubs:[{id:`client-${client.id}`,clientId:client.id,name:"Algemeen",targetSkills:[]}]).map(sub => (
-                        <tr key={sub.id} className="sub-row">
-                          <td className="col-label">↳ {sub.name}</td>
-                          {weekDates.map(date => {
-                            const entry = schedule[`${fmtDate(date)}-${sub.id}`];
-                            return (
-                              <td key={fmtDate(date)} className="col-day">
-                                {entry?.rows?.map((row,ri) => {
-                                  const emp = employees.find(e => e.id===row.employeeId);
-                                  if (!emp) return null;
-                                  const minH = row.selectedHours?.length ? Math.min(...row.selectedHours) : "?";
-                                  const maxH = row.selectedHours?.length ? Math.max(...row.selectedHours)+1 : "?";
-                                  return (
-                                    <div key={ri} style={{ borderBottom:ri<(entry.rows.length-1)?"1px dashed #ccc":"none", paddingBottom:"1px", marginBottom:"1px" }}>
-                                      <div className={`pw-emp${ri>0?" pw-emp2":""}`}>{emp.name}</div>
-                                      <div className="pw-hrs">
-                                        {String(minH).padStart(2,"0")}–{String(maxH).padStart(2,"0")}
-                                        <span className="pw-badge">{nettoUren(row.selectedHours)}u</span>
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </React.Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // VACATION MODAL
-  // ═══════════════════════════════════════════════════════════════════════
+  // ── Vakantie modal ────────────────────────────────────────────────────────
   function VacationModal() {
     const emp = employees.find(e => e.id===vacModal);
     if (!emp) return null;
@@ -980,9 +685,7 @@ const isAdmin = currentEmp?.isAdmin ?? false;
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // CUSTOM SHIFT MODAL
-  // ═══════════════════════════════════════════════════════════════════════
+  // ── Custom shift modal ────────────────────────────────────────────────────
   function CustomShiftModal() {
     if (!customShiftSlot) return null;
     const {slotId,rowIdx} = customShiftSlot;
@@ -1028,9 +731,7 @@ const isAdmin = currentEmp?.isAdmin ?? false;
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // PRINT MODAL
-  // ═══════════════════════════════════════════════════════════════════════
+  // ── Print modal ───────────────────────────────────────────────────────────
   function PrintModal() {
     return (
       <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center" }} onClick={() => setShowPrintModal(false)}>
@@ -1056,9 +757,157 @@ const isAdmin = currentEmp?.isAdmin ?? false;
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // TAB: PLANNING
-  // ═══════════════════════════════════════════════════════════════════════
+  // ── Print view (tijdslijn per uur) ────────────────────────────────────────
+  function PrintView() {
+    const allDates = displayDates();
+    const weeks    = viewType==="maand" ? groupByWeek(allDates) : [allDates];
+    // Verzamel alle uren die gebruikt worden
+    const allUsedHours = WORK_HOURS.filter(h => {
+      return allDates.some(date => {
+        const ds = fmtDate(date);
+        return Object.entries(schedule).some(([slotId, entry]) =>
+          slotId.startsWith(ds) && entry.rows?.some(r => r.selectedHours?.includes(h))
+        );
+      });
+    });
+    const timelineHours = allUsedHours.length > 0 ? allUsedHours : [7,8,9,10,11,12,13,14,15,16,17];
+
+    return (
+      <div className="print-wrap" style={{ display:"none" }}>
+        {weeks.map((weekDates,wi) => (
+          <div key={wi} className="pw-page">
+            <div className="pw-header">
+              <div>
+                <div className="pw-title">{activeDept?.name} — Planning {MONTH_LABELS[viewMonth]} {viewYear}</div>
+                <div className="pw-sub">
+                  Week {weekNum(weekDates[0])}{weekDates.length>1&&` – ${weekNum(weekDates[weekDates.length-1])}`}
+                  &nbsp;·&nbsp;{weekDates[0].toLocaleDateString("nl-NL",{day:"numeric",month:"short"})} –&nbsp;
+                  {weekDates[weekDates.length-1].toLocaleDateString("nl-NL",{day:"numeric",month:"short",year:"numeric"})}
+                </div>
+              </div>
+              <div className="pw-meta">
+                <div>Gedrukt: {new Date().toLocaleDateString("nl-NL")}</div>
+                <div>{activeDept?.name} · {deptEmployees.length} mw · {deptClients.length} klanten</div>
+              </div>
+            </div>
+
+            {/* Tijdslijn tabel per dag */}
+            {weekDates.map(date => {
+              const ds = fmtDate(date);
+              const isWE = date.getDay()===0||date.getDay()===6;
+              const dayEntries: {sub:Subcategory|{id:string;name:string;clientId:string;targetSkills:string[]};client:Client;rows:SlotRow[]}[] = [];
+              deptClients.forEach(client => {
+                const csubs = subcats.filter(s => s.clientId===client.id);
+                (csubs.length ? csubs : [{id:`client-${client.id}`,clientId:client.id,name:"Algemeen",targetSkills:[]}]).forEach(sub => {
+                  const entry = schedule[`${ds}-${sub.id}`];
+                  if (entry?.rows?.length) {
+                    dayEntries.push({sub, client, rows:entry.rows});
+                  }
+                });
+              });
+              if (dayEntries.length === 0) return null;
+              return (
+                <div key={ds} style={{ marginBottom:"8px", pageBreakInside:"avoid" }}>
+                  <div style={{ background:"#1e293b", color:isWE?"#fca5a5":"#f8fafc", padding:"3px 6px", fontSize:"7pt", fontWeight:"700", marginBottom:"2px" }}>
+                    {dayLabel(date)} {date.getDate()}/{date.getMonth()+1}/{date.getFullYear()}
+                  </div>
+                  <table className="pw-tbl" style={{ tableLayout:"fixed" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width:"100px", textAlign:"left", padding:"2px 4px" }}>Klant / Taak</th>
+                        {timelineHours.map(h => (
+                          <th key={h} style={{ width:"24px", fontSize:"5pt", padding:"2px 0" }}>
+                            {String(h).padStart(2,"0")}
+                          </th>
+                        ))}
+                        <th style={{ width:"40px", fontSize:"5pt" }}>Totaal</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dayEntries.map(({sub, client, rows}) => (
+                        rows.map((row, ri) => {
+                          const emp = employees.find(e => e.id===row.employeeId);
+                          if (!emp) return null;
+                          const netto = nettoUrenEmp(emp, row.selectedHours);
+                          const empColor = emp.color || EMPLOYEE_COLORS[0];
+                          const textCol  = contrastColor(empColor);
+                          return (
+                            <tr key={`${sub.id}-${ri}`} className="sub-row">
+                              <td style={{ padding:"2px 4px", fontSize:"5pt" }}>
+                                <div style={{ fontWeight:"700", color:"#1e293b", fontSize:"5pt" }}>{client.name}</div>
+                                <div style={{ color:"#64748b", fontSize:"4.5pt" }}>↳ {sub.name}</div>
+                              </td>
+                              {timelineHours.map(h => {
+                                const isActive = row.selectedHours?.includes(h);
+                                return (
+                                  <td key={h} style={{ padding:"1px", height:"18px" }}>
+                                    {isActive && (
+                                      <div style={{
+                                        background:empColor,
+                                        height:"100%",
+                                        minHeight:"16px",
+                                        display:"flex",
+                                        alignItems:"center",
+                                        justifyContent:"center",
+                                        fontSize:"4pt",
+                                        color:textCol,
+                                        fontWeight:"700",
+                                        WebkitPrintColorAdjust:"exact",
+                                        printColorAdjust:"exact",
+                                      }}>
+                                        {ri===0 && row.selectedHours?.indexOf(h)===Math.floor(row.selectedHours.length/2) ? emp.name.split(" ")[0] : ""}
+                                      </div>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                              <td style={{ padding:"2px", textAlign:"center" }}>
+                                <div style={{ fontSize:"5pt", fontWeight:"700", background:empColor, color:textCol, borderRadius:"2px", padding:"1px 3px", WebkitPrintColorAdjust:"exact", printColorAdjust:"exact" }}>
+                                  {netto.toFixed(1)}u
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
+
+            {/* FTE overzicht */}
+            {useFTE && (
+              <div style={{ marginTop:"8px", borderTop:"1px solid #1e293b", paddingTop:"5px" }}>
+                <div style={{ fontSize:"6pt", color:"#475569", fontWeight:"700", marginBottom:"4px" }}>FTE OVERZICHT</div>
+                <div style={{ display:"flex", gap:"12px", flexWrap:"wrap" }}>
+                  {deptClients.map(client => {
+                    const fte = fteForClient(client.id);
+                    const fteDiff = fte - client.fteNeeded;
+                    return (
+                      <div key={client.id} style={{ fontSize:"5.5pt" }}>
+                        <span style={{ fontWeight:"700" }}>{client.name}:</span>{" "}
+                        {fte.toFixed(2)} / {client.fteNeeded} FTE{" "}
+                        <span style={{ color:fteDiff>=0?"#059669":"#dc2626" }}>
+                          ({fteDiff>=0?"+":""}{fteDiff.toFixed(2)})
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // TABS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ── Tab: Planning ─────────────────────────────────────────────────────────
   function TabPlanning() {
     const dates = displayDates();
     return (
@@ -1088,11 +937,15 @@ const isAdmin = currentEmp?.isAdmin ?? false;
             <button onClick={() => setViewType("maand")}
               style={{ background:viewType==="maand"?"#3B82F6":"transparent",border:"none",color:"white",padding:"5px 14px",borderRadius:"6px",cursor:"pointer",fontWeight:viewType==="maand"?"700":"400" }}>Maand</button>
           </div>
-          <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:"6px", fontSize:"10px", color:"#475569" }}>
-            <span style={{ color:"#10B981" }}>■</span> 1e &nbsp;<span style={{ color:"#A78BFA" }}>■</span> 2e
+          <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:"6px", fontSize:"10px", color:"#475569", flexWrap:"wrap" }}>
+            {deptEmployees.slice(0,8).map(e => (
+              <span key={e.id} style={{ display:"flex", alignItems:"center", gap:"3px" }}>
+                <span style={{ width:"8px", height:"8px", borderRadius:"50%", background:e.color, display:"inline-block" }}/>
+                <span style={{ fontSize:"9px" }}>{e.name.split(" ")[0]}</span>
+              </span>
+            ))}
           </div>
         </div>
-
         <table style={{ width:"100%", borderCollapse:"collapse" }}>
           <thead>
             <tr>
@@ -1129,7 +982,11 @@ const isAdmin = currentEmp?.isAdmin ?? false;
                           <div style={{ display:"flex",alignItems:"center",gap:"8px",fontSize:"11px" }}>
                             <span style={{ color:"#475569" }}>Doel FTE:
                               <input type="number" step="0.5" value={client.fteNeeded}
-                                onChange={e => setClients(prev => prev.map(c => c.id===client.id?{...c,fteNeeded:parseFloat(e.target.value)||0}:c))}
+                                onChange={e => {
+                                  const updated = {...client, fteNeeded:parseFloat(e.target.value)||0};
+                                  setClients(prev => prev.map(c => c.id===client.id ? updated : c));
+                                  syncClient(updated);
+                                }}
                                 style={{ width:"45px",background:"#1e293b",color:"white",border:"1px solid #334155",borderRadius:"4px",padding:"1px 4px",marginLeft:"4px" }}/>
                             </span>
                             <span style={{ color:"#64748B" }}>Ingepland: <strong style={{ color:"white" }}>{fte.toFixed(2)} FTE</strong></span>
@@ -1152,7 +1009,7 @@ const isAdmin = currentEmp?.isAdmin ?? false;
                         )}
                       </td>
                       {dates.map(date => {
-                        const slotId = sub.id.startsWith("client-") ? `${fmtDate(date)}-${sub.id}` : `${fmtDate(date)}-${sub.id}`;
+                        const slotId = `${fmtDate(date)}-${sub.id}`;
                         const avail  = deptEmployees.filter(e => isAvail(e,date)&&(sub.targetSkills.length===0||e.subCatIds.includes(sub.id)));
                         return <PlanningCell key={fmtDate(date)} slotId={slotId} date={date} avail={avail}/>;
                       })}
@@ -1167,58 +1024,117 @@ const isAdmin = currentEmp?.isAdmin ?? false;
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // TAB: MEDEWERKERS
-  // ═══════════════════════════════════════════════════════════════════════
+  // ── Tab: Medewerkers ──────────────────────────────────────────────────────
   function TabMedewerkers() {
+    async function addEmployee() {
+      const colorIdx = employees.length % EMPLOYEE_COLORS.length;
+      const newEmp: Employee = {
+        id: "e" + Date.now(),
+        name: "Nieuwe medewerker",
+        departmentId: activeDeptId,
+        hoursPerWeek: 40,
+        mainClientId: "",
+        subCatIds: [],
+        subCatSkills: {},
+        standardOffDays: ["Zaterdag","Zondag"],
+        vacationDates: [],
+        defaultShiftId: "",
+        hourlyWage: 0,
+        isAdmin: false,
+        color: EMPLOYEE_COLORS[colorIdx],
+        breaks: [],
+      };
+      setEmployees(prev => [...prev, newEmp]);
+      const { error } = await sb.from("employees").insert({
+        id: newEmp.id, name: newEmp.name, department_id: newEmp.departmentId,
+        hours_per_week: newEmp.hoursPerWeek, main_client_id: null,
+        sub_cat_ids: [], sub_cat_skills: {},
+        standard_off_days: newEmp.standardOffDays, vacation_dates: [],
+        default_shift_id: null, hourly_wage: 0, is_admin: false,
+        color: newEmp.color, breaks: [],
+      });
+      if (error) console.error("Medewerker aanmaken mislukt:", error.message);
+    }
+
+    function addBreak(emp: Employee) {
+      const nb: BreakConfig = { id:"br"+Date.now(), durationMinutes:15, label:"Pauze" };
+      updEmployee({...emp, breaks:[...emp.breaks, nb]});
+    }
+    function updateBreak(emp: Employee, breakId: string, minutes: number) {
+      const updated = emp.breaks.map(b => b.id===breakId ? {...b, durationMinutes:minutes} : b);
+      updEmployee({...emp, breaks:updated});
+    }
+    function removeBreak(emp: Employee, breakId: string) {
+      updEmployee({...emp, breaks:emp.breaks.filter(b => b.id!==breakId)});
+    }
+
     return (
       <div style={{ background:"#0f172a",borderRadius:"12px",padding:"20px",border:"1px solid #1e293b" }}>
         <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"20px" }}>
           <h3 style={{ margin:0,color:"white",fontWeight:"700" }}>Medewerkers — {activeDept?.name}</h3>
-          <button onClick={() => {
-            const emp: Employee = { id:"e"+Date.now(), name:"Nieuwe medewerker", departmentId:activeDeptId,
-              hoursPerWeek:40, mainClientId:"", subCatIds:[], subCatSkills:{},
-              standardOffDays:["Zaterdag","Zondag"], vacationDates:[], defaultShiftId:"", hourlyWage:0, isAdmin:false };
-            setEmployees(prev => [...prev,emp]);
-          }} style={{ background:"#3B82F6",border:"none",color:"white",padding:"8px 16px",borderRadius:"8px",cursor:"pointer",fontWeight:"700",display:"flex",alignItems:"center",gap:"6px" }}>
+          <button onClick={addEmployee}
+            style={{ background:"#3B82F6",border:"none",color:"white",padding:"8px 16px",borderRadius:"8px",cursor:"pointer",fontWeight:"700",display:"flex",alignItems:"center",gap:"6px" }}>
             <Plus size={14}/> Toevoegen
           </button>
         </div>
 
         {deptEmployees.length===0 && <div style={{ color:"#334155",textAlign:"center",padding:"40px" }}>Geen medewerkers. Klik op + Toevoegen.</div>}
 
-        <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(360px,1fr))",gap:"20px" }}>
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(380px,1fr))",gap:"20px" }}>
           {deptEmployees.map(emp => {
-            const gepland = geplandUrenDezePeriode(emp.id);
+            const gepland = geplandUrenDezeWeek(emp.id, weekStart);
             const pct     = Math.min(100, Math.round(gepland/emp.hoursPerWeek*100));
             const over    = gepland > emp.hoursPerWeek;
+            const totalBreakMins = (emp.breaks||[]).reduce((s,b) => s+b.durationMinutes, 0);
             return (
-              <div key={emp.id} style={{ background:"#1e293b",borderRadius:"12px",padding:"18px",border:"1px solid #334155" }}>
+              <div key={emp.id} style={{ background:"#1e293b",borderRadius:"12px",padding:"18px",border:"1px solid #334155", borderTop:`3px solid ${emp.color}` }}>
                 <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"12px" }}>
-                  <input value={emp.name} onChange={e => updEmployee({...emp,name:e.target.value})}
-                    style={{ background:"none",border:"none",color:"white",fontSize:"16px",fontWeight:"700",flex:1,outline:"none" }}/>
+                  <div style={{ display:"flex",alignItems:"center",gap:"10px",flex:1 }}>
+                    {/* Kleur picker */}
+                    <div style={{ position:"relative" }}>
+                      <div style={{ width:"28px",height:"28px",borderRadius:"50%",background:emp.color,cursor:"pointer",border:"2px solid #334155",flexShrink:0 }}
+                        title="Klik om kleur te wijzigen"
+                        onClick={() => {
+                          const idx = EMPLOYEE_COLORS.indexOf(emp.color);
+                          const nextColor = EMPLOYEE_COLORS[(idx+1)%EMPLOYEE_COLORS.length];
+                          updEmployee({...emp,color:nextColor});
+                        }}/>
+                    </div>
+                    <input value={emp.name} onChange={e => updEmployee({...emp,name:e.target.value})}
+                      style={{ background:"none",border:"none",color:"white",fontSize:"16px",fontWeight:"700",flex:1,outline:"none" }}/>
+                  </div>
                   <div style={{ display:"flex",gap:"6px" }}>
                     <button onClick={() => { setVacModalMonth(viewMonth);setVacModalYear(viewYear);setVacModal(emp.id); }}
                       style={{ background:"#F59E0B",color:"white",border:"none",padding:"5px 10px",borderRadius:"6px",fontSize:"11px",cursor:"pointer" }}>🌴</button>
-                    <button onClick={() => { if(window.confirm("Medewerker verwijderen?")) setEmployees(prev => prev.filter(e => e.id!==emp.id)); }}
-                      style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer" }}><Trash2 size={16}/></button>
+                    <button onClick={async () => {
+                      if(window.confirm("Medewerker verwijderen?")) await deleteEmployee(emp.id);
+                    }} style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer" }}><Trash2 size={16}/></button>
                   </div>
+                </div>
+
+                {/* Kleur selectie row */}
+                <div style={{ display:"flex",gap:"5px",marginBottom:"12px",flexWrap:"wrap" }}>
+                  {EMPLOYEE_COLORS.map(col => (
+                    <div key={col} onClick={() => updEmployee({...emp,color:col})}
+                      style={{ width:"16px",height:"16px",borderRadius:"50%",background:col,cursor:"pointer",border:emp.color===col?"2px solid white":"2px solid transparent",boxSizing:"border-box" }}/>
+                  ))}
                 </div>
 
                 {/* Urenbalk */}
                 <div style={{ background:"#0f172a",borderRadius:"6px",padding:"8px",marginBottom:"12px" }}>
                   <div style={{ display:"flex",justifyContent:"space-between",fontSize:"10px",marginBottom:"4px" }}>
-                    <span style={{ color:"#64748B" }}>Ingepland deze periode</span>
-                    <span style={{ color:over?"#EF4444":"#10B981",fontWeight:"700" }}>{gepland}u / {emp.hoursPerWeek}u</span>
+                    <span style={{ color:"#64748B" }}>Ingepland deze week</span>
+                    <span style={{ color:over?"#EF4444":"#10B981",fontWeight:"700" }}>{gepland.toFixed(1)}u / {emp.hoursPerWeek}u</span>
                   </div>
                   <div style={{ height:"4px",background:"#334155",borderRadius:"2px",overflow:"hidden" }}>
-                    <div style={{ width:`${pct}%`,height:"100%",background:over?"#EF4444":"#10B981",transition:"width 0.3s" }}/>
+                    <div style={{ width:`${pct}%`,height:"100%",background:over?"#EF4444":emp.color,transition:"width 0.3s" }}/>
                   </div>
                 </div>
 
                 <div style={{ display:"flex",gap:"10px",flexWrap:"wrap",marginBottom:"12px" }}>
                   {[
                     { label:"UREN/WEEK", content: <input type="number" value={emp.hoursPerWeek} onChange={e => updEmployee({...emp,hoursPerWeek:Number(e.target.value)})} style={{ width:"60px",background:"#0f172a",color:"white",border:"1px solid #334155",borderRadius:"4px",padding:"4px 5px" }}/> },
+                    { label:"UURLOON (€)", content: <input type="number" step="0.01" min="0" value={emp.hourlyWage||0} onChange={e => updEmployee({...emp,hourlyWage:parseFloat(e.target.value)||0})} style={{ width:"70px",background:"#0f172a",color:"white",border:"1px solid #334155",borderRadius:"4px",padding:"4px 5px" }}/> },
                     { label:"HOOFD KLANT", content: <select value={emp.mainClientId} onChange={e => updEmployee({...emp,mainClientId:e.target.value})} style={{ background:"#0f172a",color:"white",border:"1px solid #334155",borderRadius:"4px",padding:"4px 6px" }}>
                       <option value="">Geen</option>{deptClients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select> },
@@ -1228,12 +1144,51 @@ const isAdmin = currentEmp?.isAdmin ?? false;
                     { label:"AFDELING", content: <select value={emp.departmentId} onChange={e => updEmployee({...emp,departmentId:e.target.value})} style={{ background:"#0f172a",color:"white",border:"1px solid #334155",borderRadius:"4px",padding:"4px 6px" }}>
                       {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                     </select> },
+                    { label:"BEHEERDER", content: <button onClick={() => updEmployee({...emp,isAdmin:!emp.isAdmin})} style={{ background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center" }}>
+                      {emp.isAdmin ? <ToggleRight size={24} color="#8B5CF6"/> : <ToggleLeft size={24} color="#475569"/>}
+                    </button> },
                   ].map(({label,content}) => (
                     <div key={label}>
                       <label style={{ fontSize:"9px",color:"#64748B",display:"block",marginBottom:"3px",fontWeight:"700",letterSpacing:"0.06em" }}>{label}</label>
                       {content}
                     </div>
                   ))}
+                </div>
+
+                {/* Pauze Management */}
+                <div style={{ background:"#0f172a",borderRadius:"8px",padding:"10px",marginBottom:"12px" }}>
+                  <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px" }}>
+                    <div style={{ display:"flex",alignItems:"center",gap:"6px" }}>
+                      <Coffee size={12} color="#F59E0B"/>
+                      <span style={{ fontSize:"9px",color:"#F59E0B",fontWeight:"700",letterSpacing:"0.06em" }}>PAUZE CONFIGURATIE</span>
+                    </div>
+                    <button onClick={() => addBreak(emp)}
+                      style={{ background:"#F59E0B",border:"none",color:"black",padding:"3px 8px",borderRadius:"4px",fontSize:"9px",cursor:"pointer",fontWeight:"700",display:"flex",alignItems:"center",gap:"3px" }}>
+                      <Plus size={9}/>Pauze
+                    </button>
+                  </div>
+                  {emp.breaks.length === 0 ? (
+                    <div style={{ fontSize:"10px",color:"#334155",textAlign:"center",padding:"6px" }}>
+                      Geen pauzes geconfigureerd. Standaard: 60 min bij ≥9u dienst.
+                    </div>
+                  ) : (
+                    <>
+                      {emp.breaks.map(b => (
+                        <div key={b.id} style={{ display:"flex",gap:"8px",alignItems:"center",marginBottom:"5px",background:"#1e293b",borderRadius:"5px",padding:"6px 8px" }}>
+                          <Coffee size={10} color="#F59E0B"/>
+                          <select value={b.durationMinutes} onChange={e => updateBreak(emp, b.id, Number(e.target.value))}
+                            style={{ background:"#0f172a",color:"white",border:"1px solid #334155",borderRadius:"4px",padding:"3px 6px",fontSize:"11px" }}>
+                            {[10,15,20,30,45,60].map(m => <option key={m} value={m}>{m} min</option>)}
+                          </select>
+                          <span style={{ fontSize:"10px",color:"#64748B",flex:1 }}>pauze</span>
+                          <button onClick={() => removeBreak(emp, b.id)} style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer",padding:0 }}>✕</button>
+                        </div>
+                      ))}
+                      <div style={{ fontSize:"10px",color:"#64748B",marginTop:"6px",fontFamily:"monospace",textAlign:"right" }}>
+                        Totaal: <span style={{ color:"#F59E0B",fontWeight:"700" }}>{totalBreakMins} min</span> pauze per dienst
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {/* Vrije dagen */}
@@ -1321,9 +1276,7 @@ const isAdmin = currentEmp?.isAdmin ?? false;
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // TAB: BEHEER
-  // ═══════════════════════════════════════════════════════════════════════
+  // ── Tab: Beheer ───────────────────────────────────────────────────────────
   function TabBeheer() {
     return (
       <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:"20px" }}>
@@ -1331,13 +1284,22 @@ const isAdmin = currentEmp?.isAdmin ?? false;
         <section style={{ background:"#0f172a",borderRadius:"12px",padding:"20px",border:"1px solid #1e293b" }}>
           <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px" }}>
             <div style={{ display:"flex",alignItems:"center",gap:"8px" }}><Building2 size={15} color="#3B82F6"/><h3 style={{ margin:0,color:"white",fontSize:"14px",fontWeight:"700" }}>Afdelingen</h3></div>
-            <button onClick={() => { const n=prompt("Naam nieuwe afdeling?"); if(n) setDepts(prev=>[...prev,{id:"d"+Date.now(),name:n}]); }}
-              style={{ background:"#3B82F6",border:"none",color:"white",padding:"5px 10px",borderRadius:"6px",cursor:"pointer",fontSize:"12px",display:"flex",alignItems:"center",gap:"4px" }}><Plus size={11}/>Nieuw</button>
+            <button onClick={async () => {
+              const n=prompt("Naam nieuwe afdeling?"); if(!n) return;
+              const nd = {id:"d"+Date.now(), name:n};
+              setDepts(prev=>[...prev, nd]);
+              await sb.from("departments").insert({id:nd.id, name:nd.name});
+            }} style={{ background:"#3B82F6",border:"none",color:"white",padding:"5px 10px",borderRadius:"6px",cursor:"pointer",fontSize:"12px",display:"flex",alignItems:"center",gap:"4px" }}><Plus size={11}/>Nieuw</button>
           </div>
+          {depts.length === 0 && <div style={{ color:"#334155",fontSize:"12px",textAlign:"center",padding:"20px" }}>Geen afdelingen. Voeg er een toe.</div>}
           {depts.map(d => (
             <div key={d.id} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",background:"#1e293b",borderRadius:"6px",padding:"8px 12px",marginBottom:"5px" }}>
-              <input value={d.name} onChange={e => setDepts(prev => prev.map(x => x.id===d.id?{...x,name:e.target.value}:x))} style={{ background:"none",border:"none",color:"white",flex:1,outline:"none" }}/>
-              {depts.length>1 && <button onClick={() => { if(window.confirm("Afdeling verwijderen?")) setDepts(prev => prev.filter(x => x.id!==d.id)); }} style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer" }}><Trash2 size={14}/></button>}
+              <input value={d.name} onChange={e => {
+                const upd = {...d, name:e.target.value};
+                setDepts(prev => prev.map(x => x.id===d.id ? upd : x));
+                syncDept(upd);
+              }} style={{ background:"none",border:"none",color:"white",flex:1,outline:"none" }}/>
+              {depts.length>1 && <button onClick={async () => { if(window.confirm("Afdeling verwijderen?")) await deleteDept(d.id); }} style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer" }}><Trash2 size={14}/></button>}
             </div>
           ))}
         </section>
@@ -1346,25 +1308,33 @@ const isAdmin = currentEmp?.isAdmin ?? false;
         <section style={{ background:"#0f172a",borderRadius:"12px",padding:"20px",border:"1px solid #1e293b" }}>
           <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px" }}>
             <div style={{ display:"flex",alignItems:"center",gap:"8px" }}><Zap size={15} color="#8B5CF6"/><h3 style={{ margin:0,color:"white",fontSize:"14px",fontWeight:"700" }}>Skills & Criteria</h3></div>
-            <button onClick={() => {
+            <button onClick={async () => {
               const n=prompt("Naam nieuwe skill?"); if (!n) return;
-              const ns: Skill = {id:"s"+Date.now(),name:n,criteria:""};
-              setSkills(prev => [...prev,ns]);
+              const ns: Skill = {id:"s"+Date.now(), name:n, criteria:""};
+              setSkills(prev => [...prev, ns]);
               setEmployees(prev => prev.map(emp => {
                 const nm={...emp.subCatSkills};
                 emp.subCatIds.forEach(subId => { nm[subId]={...(nm[subId]||{}),[ns.id]:0}; });
                 return {...emp,subCatSkills:nm};
               }));
+              await sb.from("skills").insert({id:ns.id, name:ns.name, criteria:""});
             }} style={{ background:"#8B5CF6",border:"none",color:"white",padding:"5px 10px",borderRadius:"6px",cursor:"pointer",fontSize:"12px",display:"flex",alignItems:"center",gap:"4px" }}><Plus size={11}/>Skill</button>
           </div>
           {skills.map(s => (
             <div key={s.id} style={{ background:"#1e293b",borderRadius:"8px",padding:"10px",marginBottom:"8px" }}>
               <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px" }}>
-                <input value={s.name} onChange={e => setSkills(prev => prev.map(x => x.id===s.id?{...x,name:e.target.value}:x))} style={{ background:"none",border:"none",color:"white",fontWeight:"700",fontSize:"13px",flex:1,outline:"none" }}/>
-                <button onClick={() => { if(window.confirm("Skill verwijderen?")) setSkills(prev => prev.filter(x => x.id!==s.id)); }} style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer" }}><Trash2 size={14}/></button>
+                <input value={s.name} onChange={e => {
+                  const upd = {...s, name:e.target.value};
+                  setSkills(prev => prev.map(x => x.id===s.id ? upd : x));
+                  syncSkill(upd);
+                }} style={{ background:"none",border:"none",color:"white",fontWeight:"700",fontSize:"13px",flex:1,outline:"none" }}/>
+                <button onClick={async () => { if(window.confirm("Skill verwijderen?")) await deleteSkill(s.id); }} style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer" }}><Trash2 size={14}/></button>
               </div>
-              <textarea value={s.criteria} onChange={e => setSkills(prev => prev.map(x => x.id===s.id?{...x,criteria:e.target.value}:x))}
-                placeholder="Vereisten voor 100%..." rows={2}
+              <textarea value={s.criteria} onChange={e => {
+                const upd = {...s, criteria:e.target.value};
+                setSkills(prev => prev.map(x => x.id===s.id ? upd : x));
+                syncSkill(upd);
+              }} placeholder="Vereisten voor 100%..." rows={2}
                 style={{ width:"100%",background:"#0f172a",color:"#64748B",border:"1px solid #334155",borderRadius:"4px",fontSize:"11px",padding:"6px",resize:"vertical",boxSizing:"border-box" }}/>
             </div>
           ))}
@@ -1374,8 +1344,12 @@ const isAdmin = currentEmp?.isAdmin ?? false;
         <section style={{ background:"#0f172a",borderRadius:"12px",padding:"20px",border:"1px solid #1e293b",gridColumn:"1/-1" }}>
           <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px" }}>
             <div style={{ display:"flex",alignItems:"center",gap:"8px" }}><Users size={15} color="#10B981"/><h3 style={{ margin:0,color:"white",fontSize:"14px",fontWeight:"700" }}>Klanten & Subcategorieën ({activeDept?.name})</h3></div>
-            <button onClick={() => { const n=prompt("Naam nieuwe klant?"); if(n) setClients(prev=>[...prev,{id:"c"+Date.now(),name:n,departmentId:activeDeptId,fteNeeded:1}]); }}
-              style={{ background:"#10B981",border:"none",color:"white",padding:"7px 14px",borderRadius:"8px",cursor:"pointer",fontWeight:"700",display:"flex",alignItems:"center",gap:"6px" }}><Plus size={14}/>Klant</button>
+            <button onClick={async () => {
+              const n=prompt("Naam nieuwe klant?"); if(!n) return;
+              const nc: Client = {id:"c"+Date.now(), name:n, departmentId:activeDeptId, fteNeeded:1};
+              setClients(prev=>[...prev, nc]);
+              await sb.from("clients").insert({id:nc.id, name:nc.name, department_id:nc.departmentId, fte_needed:nc.fteNeeded});
+            }} style={{ background:"#10B981",border:"none",color:"white",padding:"7px 14px",borderRadius:"8px",cursor:"pointer",fontWeight:"700",display:"flex",alignItems:"center",gap:"6px" }}><Plus size={14}/>Klant</button>
           </div>
           <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:"14px" }}>
             {deptClients.map(client => {
@@ -1383,25 +1357,41 @@ const isAdmin = currentEmp?.isAdmin ?? false;
               return (
                 <div key={client.id} style={{ background:"#1e293b",borderRadius:"10px",padding:"14px",borderLeft:"3px solid #38BDF8" }}>
                   <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px" }}>
-                    <input value={client.name} onChange={e => setClients(prev => prev.map(c => c.id===client.id?{...c,name:e.target.value}:c))} style={{ background:"none",border:"none",color:"white",fontWeight:"700",fontSize:"14px",flex:1,outline:"none" }}/>
-                    <button onClick={() => { if(window.confirm("Klant + subcategorieën verwijderen?")){ setClients(prev => prev.filter(c => c.id!==client.id)); setSubcats(prev => prev.filter(s => s.clientId!==client.id)); } }} style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer" }}><Trash2 size={14}/></button>
+                    <input value={client.name} onChange={e => {
+                      const upd = {...client, name:e.target.value};
+                      setClients(prev => prev.map(c => c.id===client.id ? upd : c));
+                      syncClient(upd);
+                    }} style={{ background:"none",border:"none",color:"white",fontWeight:"700",fontSize:"14px",flex:1,outline:"none" }}/>
+                    <button onClick={async () => { if(window.confirm("Klant + subcategorieën verwijderen?")) await deleteClient(client.id); }} style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer" }}><Trash2 size={14}/></button>
                   </div>
                   <div style={{ marginBottom:"10px" }}>
                     <label style={{ fontSize:"9px",color:"#64748B",display:"block",marginBottom:"3px",fontWeight:"700",letterSpacing:"0.06em" }}>FTE DOEL</label>
-                    <input type="number" step="0.5" value={client.fteNeeded} onChange={e => setClients(prev => prev.map(c => c.id===client.id?{...c,fteNeeded:parseFloat(e.target.value)||0}:c))}
-                      style={{ width:"70px",background:"#0f172a",color:"white",border:"1px solid #334155",borderRadius:"4px",padding:"4px 6px" }}/>
+                    <input type="number" step="0.5" value={client.fteNeeded} onChange={e => {
+                      const upd = {...client, fteNeeded:parseFloat(e.target.value)||0};
+                      setClients(prev => prev.map(c => c.id===client.id ? upd : c));
+                      syncClient(upd);
+                    }} style={{ width:"70px",background:"#0f172a",color:"white",border:"1px solid #334155",borderRadius:"4px",padding:"4px 6px" }}/>
                   </div>
                   {csubs.map(sub => (
                     <div key={sub.id} style={{ background:"#0f172a",borderRadius:"6px",padding:"8px",marginBottom:"6px" }}>
                       <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px" }}>
-                        <input value={sub.name} onChange={e => setSubcats(prev => prev.map(s => s.id===sub.id?{...s,name:e.target.value}:s))} style={{ background:"none",border:"none",color:"#94A3B8",fontWeight:"700",fontSize:"12px",flex:1,outline:"none" }}/>
-                        <button onClick={() => setSubcats(prev => prev.filter(s => s.id!==sub.id))} style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer",fontSize:"11px" }}>✕</button>
+                        <input value={sub.name} onChange={e => {
+                          const upd = {...sub, name:e.target.value};
+                          setSubcats(prev => prev.map(s => s.id===sub.id ? upd : s));
+                          syncSubcat(upd);
+                        }} style={{ background:"none",border:"none",color:"#94A3B8",fontWeight:"700",fontSize:"12px",flex:1,outline:"none" }}/>
+                        <button onClick={async () => await deleteSubcat(sub.id)} style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer",fontSize:"11px" }}>✕</button>
                       </div>
                       <div style={{ fontSize:"9px",color:"#475569",marginBottom:"5px",letterSpacing:"0.06em",fontWeight:"700" }}>VEREISTE SKILLS:</div>
                       <div style={{ display:"flex",flexWrap:"wrap",gap:"4px" }}>
                         {skills.map(s => {
                           const has = sub.targetSkills.includes(s.id);
-                          return <button key={s.id} onClick={() => { const nt=has?sub.targetSkills.filter(x=>x!==s.id):[...sub.targetSkills,s.id]; setSubcats(prev => prev.map(sc => sc.id===sub.id?{...sc,targetSkills:nt}:sc)); }} title={s.criteria}
+                          return <button key={s.id} onClick={() => {
+                            const nt  = has?sub.targetSkills.filter(x=>x!==s.id):[...sub.targetSkills,s.id];
+                            const upd = {...sub, targetSkills:nt};
+                            setSubcats(prev => prev.map(sc => sc.id===sub.id ? upd : sc));
+                            syncSubcat(upd);
+                          }} title={s.criteria}
                             style={{ fontSize:"9px",padding:"3px 8px",borderRadius:"10px",cursor:"pointer",border:has?"1px solid #8B5CF6":"1px solid #334155",background:has?"#8B5CF6":"transparent",color:has?"white":"#475569" }}>
                             {has?"✓ ":""}{s.name}
                           </button>;
@@ -1410,8 +1400,12 @@ const isAdmin = currentEmp?.isAdmin ?? false;
                       </div>
                     </div>
                   ))}
-                  <button onClick={() => { const n=prompt("Naam subcategorie?"); if(n) setSubcats(prev=>[...prev,{id:"sub"+Date.now(),clientId:client.id,name:n,targetSkills:[]}]); }}
-                    style={{ width:"100%",padding:"5px",background:"none",border:"1px dashed #334155",color:"#64748B",borderRadius:"4px",fontSize:"11px",cursor:"pointer",marginTop:"4px" }}>
+                  <button onClick={async () => {
+                    const n=prompt("Naam subcategorie?"); if(!n) return;
+                    const ns: Subcategory = {id:"sub"+Date.now(), clientId:client.id, name:n, targetSkills:[]};
+                    setSubcats(prev=>[...prev, ns]);
+                    await sb.from("subcategories").insert({id:ns.id, client_id:ns.clientId, name:ns.name, target_skills:[]});
+                  }} style={{ width:"100%",padding:"5px",background:"none",border:"1px dashed #334155",color:"#64748B",borderRadius:"4px",fontSize:"11px",cursor:"pointer",marginTop:"4px" }}>
                     + Subcategorie
                   </button>
                 </div>
@@ -1424,21 +1418,32 @@ const isAdmin = currentEmp?.isAdmin ?? false;
         <section style={{ background:"#0f172a",borderRadius:"12px",padding:"20px",border:"1px solid #1e293b" }}>
           <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px" }}>
             <div style={{ display:"flex",alignItems:"center",gap:"8px" }}><Clock size={15} color="#F59E0B"/><h3 style={{ margin:0,color:"white",fontSize:"14px",fontWeight:"700" }}>Shift Definities</h3></div>
-            <button onClick={() => { const label=prompt("Naam shift (bv. 06–15)?"); if(!label) return; setShiftDefs(prev=>[...prev,{id:"sh"+Date.now(),label,hours:[]}]); }}
-              style={{ background:"#F59E0B",border:"none",color:"black",padding:"5px 10px",borderRadius:"6px",cursor:"pointer",fontSize:"12px",fontWeight:"700",display:"flex",alignItems:"center",gap:"4px" }}><Plus size={11}/>Shift</button>
+            <button onClick={async () => {
+              const label=prompt("Naam shift (bv. 06–15)?"); if(!label) return;
+              const ns: ShiftDef = {id:"sh"+Date.now(), label, hours:[]};
+              setShiftDefs(prev=>[...prev, ns]);
+              await sb.from("shift_defs").insert({id:ns.id, label:ns.label, hours:[]});
+            }} style={{ background:"#F59E0B",border:"none",color:"black",padding:"5px 10px",borderRadius:"6px",cursor:"pointer",fontSize:"12px",fontWeight:"700",display:"flex",alignItems:"center",gap:"4px" }}><Plus size={11}/>Shift</button>
           </div>
           {shiftDefs.map(sh => (
             <div key={sh.id} style={{ background:"#1e293b",borderRadius:"8px",padding:"12px",marginBottom:"8px" }}>
               <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px" }}>
-                <input value={sh.label} onChange={e => setShiftDefs(prev => prev.map(x => x.id===sh.id?{...x,label:e.target.value}:x))} style={{ background:"none",border:"none",color:"#F59E0B",fontWeight:"700",fontSize:"13px",flex:1,outline:"none" }}/>
-                <button onClick={() => { if(window.confirm("Shift verwijderen?")) setShiftDefs(prev => prev.filter(x => x.id!==sh.id)); }} style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer" }}><Trash2 size={14}/></button>
+                <input value={sh.label} onChange={e => {
+                  const upd = {...sh, label:e.target.value};
+                  setShiftDefs(prev => prev.map(x => x.id===sh.id ? upd : x));
+                  syncShift(upd);
+                }} style={{ background:"none",border:"none",color:"#F59E0B",fontWeight:"700",fontSize:"13px",flex:1,outline:"none" }}/>
+                <button onClick={async () => { if(window.confirm("Shift verwijderen?")) await deleteShift(sh.id); }} style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer" }}><Trash2 size={14}/></button>
               </div>
               <div style={{ fontSize:"9px",color:"#475569",marginBottom:"6px",fontWeight:"700",letterSpacing:"0.06em" }}>UREN (klik om aan/uit te zetten):</div>
               <div style={{ display:"flex",gap:"3px",flexWrap:"wrap" }}>
                 {WORK_HOURS.map(h => {
                   const on = sh.hours.includes(h);
-                  return <button key={h} onClick={() => setShiftDefs(prev => prev.map(x => x.id===sh.id?{...x,hours:on?x.hours.filter(hr=>hr!==h):[...x.hours,h].sort((a,b)=>a-b)}:x))}
-                    style={{ padding:"3px 6px",borderRadius:"4px",border:"none",fontSize:"10px",cursor:"pointer",background:on?"#F59E0B":"#334155",color:on?"black":"#475569",fontWeight:on?"700":"400" }}>
+                  return <button key={h} onClick={() => {
+                    const upd = {...sh, hours:on?sh.hours.filter(hr=>hr!==h):[...sh.hours,h].sort((a,b)=>a-b)};
+                    setShiftDefs(prev => prev.map(x => x.id===sh.id ? upd : x));
+                    syncShift(upd);
+                  }} style={{ padding:"3px 6px",borderRadius:"4px",border:"none",fontSize:"10px",cursor:"pointer",background:on?"#F59E0B":"#334155",color:on?"black":"#475569",fontWeight:on?"700":"400" }}>
                     {h}
                   </button>;
                 })}
@@ -1456,19 +1461,388 @@ const isAdmin = currentEmp?.isAdmin ?? false;
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // MAIN RENDER
-  // ═══════════════════════════════════════════════════════════════════════
+  // ── Tab: Financieel (met afdeling/klant/subcat filters) ────────────────────
+  function TabFinancieel() {
+    const [filterDeptId, setFilterDeptId] = useState<string>("all");
+    const [filterClientId, setFilterClientId] = useState<string>("all");
+    const allDates = displayDates();
+
+    // Bouw kosten-structuur
+    type SubcatData = { naam:string; kosten:number; uren:number; details:{empNaam:string;empColor:string;bruto:number;netto:number;loon:number;kosten:number}[] };
+    type ClientData = { naam:string; kosten:number; uren:number; deptId:string; subcats:Record<string,SubcatData> };
+    type DeptData   = { naam:string; kosten:number; uren:number; };
+
+    const kostenPerKlant: Record<string,ClientData> = {};
+    const kostenPerDept:  Record<string,DeptData>   = {};
+
+    // Init depts
+    depts.forEach(d => { kostenPerDept[d.id] = {naam:d.name, kosten:0, uren:0}; });
+
+    clients.forEach(client => {
+      const csubs = subcats.filter(s => s.clientId===client.id);
+      kostenPerKlant[client.id] = { naam:client.name, kosten:0, uren:0, deptId:client.departmentId, subcats:{} };
+      (csubs.length ? csubs : [{id:`client-${client.id}`,clientId:client.id,name:"Algemeen",targetSkills:[]}]).forEach(sub => {
+        kostenPerKlant[client.id].subcats[sub.id] = { naam:sub.name, kosten:0, uren:0, details:[] };
+        allDates.forEach(date => {
+          const slotId = `${fmtDate(date)}-${sub.id}`;
+          const entry  = schedule[slotId];
+          if (!entry?.rows) return;
+          entry.rows.forEach(row => {
+            const emp = employees.find(e => e.id===row.employeeId);
+            if (!emp) return;
+            const bruto  = row.selectedHours?.length || 0;
+            const netto  = nettoUrenEmp(emp, row.selectedHours);
+            const kosten = netto * (emp.hourlyWage || 0);
+            kostenPerKlant[client.id].kosten += kosten;
+            kostenPerKlant[client.id].uren   += netto;
+            kostenPerKlant[client.id].subcats[sub.id].kosten += kosten;
+            kostenPerKlant[client.id].subcats[sub.id].uren   += netto;
+            kostenPerKlant[client.id].subcats[sub.id].details.push({ empNaam:emp.name, empColor:emp.color, bruto, netto, loon:emp.hourlyWage||0, kosten });
+            if (kostenPerDept[client.departmentId]) {
+              kostenPerDept[client.departmentId].kosten += kosten;
+              kostenPerDept[client.departmentId].uren   += netto;
+            }
+          });
+        });
+      });
+    });
+
+    // Filter op afdeling/klant
+    const filteredClients = Object.entries(kostenPerKlant).filter(([,c]) => {
+      if (filterDeptId !== "all" && c.deptId !== filterDeptId) return false;
+      if (filterClientId !== "all" && !Object.keys(kostenPerKlant).includes(filterClientId)) return false;
+      if (filterClientId !== "all") return filterClientId === Object.keys(kostenPerKlant).find(k => k === filterClientId);
+      return true;
+    });
+
+    const totalKosten = filteredClients.reduce((a,[,c]) => a+c.kosten, 0);
+    const totalUren   = filteredClients.reduce((a,[,c]) => a+c.uren, 0);
+    const weekFactor  = viewType==="week" ? 1 : allDates.length/7;
+    const maandSchat  = (totalKosten / weekFactor) * (52/12);
+    const jaarSchat   = (totalKosten / weekFactor) * 52;
+
+    return (
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))", gap:"20px" }}>
+
+        {/* Filters */}
+        <div style={{ gridColumn:"1/-1", background:"#0f172a", borderRadius:"12px", padding:"16px", border:"1px solid #1e293b", display:"flex", gap:"16px", flexWrap:"wrap", alignItems:"center" }}>
+          <div style={{ display:"flex",alignItems:"center",gap:"8px" }}>
+            <Building2 size={14} color="#64748B"/>
+            <span style={{ fontSize:"11px",color:"#64748B",fontWeight:"700" }}>AFDELING:</span>
+            <select value={filterDeptId} onChange={e => { setFilterDeptId(e.target.value); setFilterClientId("all"); }}
+              style={{ background:"#1e293b",color:"white",border:"1px solid #334155",borderRadius:"6px",padding:"5px 10px",fontSize:"12px" }}>
+              <option value="all">Alle afdelingen</option>
+              {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+          <div style={{ display:"flex",alignItems:"center",gap:"8px" }}>
+            <Users size={14} color="#64748B"/>
+            <span style={{ fontSize:"11px",color:"#64748B",fontWeight:"700" }}>KLANT:</span>
+            <select value={filterClientId} onChange={e => setFilterClientId(e.target.value)}
+              style={{ background:"#1e293b",color:"white",border:"1px solid #334155",borderRadius:"6px",padding:"5px 10px",fontSize:"12px" }}>
+              <option value="all">Alle klanten</option>
+              {clients.filter(c => filterDeptId==="all" || c.departmentId===filterDeptId).map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* KPI kaarten */}
+        <div style={{ gridColumn:"1/-1", display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:"14px" }}>
+          {[
+            { label:"Loonkosten periode",  value:fmtEuro(totalKosten),  sub:`${totalUren.toFixed(1)} uur gewerkt`, icon:<Euro size={18}/>,      color:"#3B82F6" },
+            { label:"Schatting per maand", value:fmtEuro(maandSchat),   sub:"Op basis van deze periode",         icon:<TrendingUp size={18}/>, color:"#10B981" },
+            { label:"Schatting per jaar",  value:fmtEuro(jaarSchat),    sub:"Geëxtrapoleerd",                    icon:<PieChart size={18}/>,   color:"#8B5CF6" },
+          ].map(kpi => (
+            <div key={kpi.label} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:"14px", padding:"20px" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:"8px", marginBottom:"12px" }}>
+                <div style={{ color:kpi.color }}>{kpi.icon}</div>
+                <span style={{ fontSize:"12px", color:"#64748B", fontWeight:"600", letterSpacing:"0.04em" }}>{kpi.label.toUpperCase()}</span>
+              </div>
+              <div style={{ fontSize:"26px", fontWeight:"800", color:"white", letterSpacing:"-0.5px" }}>{kpi.value}</div>
+              <div style={{ fontSize:"10px", color:"#475569", marginTop:"4px" }}>{kpi.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Kosten per afdeling */}
+        <section style={{ background:"#0f172a", borderRadius:"14px", padding:"22px", border:"1px solid #1e293b" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:"8px", marginBottom:"18px" }}>
+            <Building2 size={17} color="#3B82F6"/>
+            <h3 style={{ margin:0, color:"white", fontSize:"14px", fontWeight:"700" }}>Kosten per afdeling</h3>
+          </div>
+          {Object.entries(kostenPerDept).map(([deptId, deptData]) => {
+            const deptPct = deptData.kosten > 0 && Object.values(kostenPerDept).reduce((a,d) => a+d.kosten, 0) > 0
+              ? Math.round(deptData.kosten / Object.values(kostenPerDept).reduce((a,d) => a+d.kosten, 0) * 100)
+              : 0;
+            return (
+              <div key={deptId} style={{ background:"#1e293b", borderRadius:"8px", padding:"12px", marginBottom:"8px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"6px" }}>
+                  <span style={{ fontWeight:"700", color:"white", fontSize:"13px" }}>{deptData.naam}</span>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontWeight:"700", color:"white" }}>{fmtEuro(deptData.kosten)}</div>
+                    <div style={{ fontSize:"10px", color:"#64748B" }}>{deptData.uren.toFixed(1)} uur</div>
+                  </div>
+                </div>
+                <div style={{ height:"4px", background:"#334155", borderRadius:"2px", overflow:"hidden" }}>
+                  <div style={{ width:`${deptPct}%`, height:"100%", background:"#3B82F6", transition:"width 0.3s" }}/>
+                </div>
+                <div style={{ fontSize:"9px", color:"#475569", marginTop:"3px", textAlign:"right" }}>{deptPct}% van totaal</div>
+              </div>
+            );
+          })}
+        </section>
+
+        {/* Uurlonen per medewerker */}
+        <section style={{ background:"#0f172a", borderRadius:"14px", padding:"22px", border:"1px solid #1e293b" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:"8px", marginBottom:"18px" }}>
+            <Users size={17} color="#F59E0B"/>
+            <h3 style={{ margin:0, color:"white", fontSize:"14px", fontWeight:"700" }}>Uurlonen beheren</h3>
+          </div>
+          {employees.map(emp => (
+            <div key={emp.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:"#1e293b", borderRadius:"8px", padding:"10px 14px", marginBottom:"8px", borderLeft:`3px solid ${emp.color}` }}>
+              <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
+                <div style={{ width:"10px", height:"10px", borderRadius:"50%", background:emp.color, flexShrink:0 }}/>
+                <div>
+                  <div style={{ fontSize:"13px", fontWeight:"600", color:"white" }}>{emp.name}</div>
+                  <div style={{ fontSize:"10px", color:"#64748B" }}>{depts.find(d=>d.id===emp.departmentId)?.name}</div>
+                </div>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:"6px" }}>
+                <span style={{ color:"#64748B", fontSize:"13px" }}>€</span>
+                <input type="number" step="0.01" min="0" value={emp.hourlyWage||0}
+                  onChange={e => updEmployee({...emp, hourlyWage:parseFloat(e.target.value)||0})}
+                  style={{ width:"70px", background:"#0f172a", color:"white", border:"1px solid #334155", borderRadius:"6px", padding:"5px 8px", textAlign:"right", fontSize:"13px", fontWeight:"600" }}/>
+                <span style={{ color:"#64748B", fontSize:"11px" }}>/uur</span>
+              </div>
+            </div>
+          ))}
+        </section>
+
+        {/* Kosten per klant & subcategorie */}
+        <section style={{ background:"#0f172a", borderRadius:"14px", padding:"22px", border:"1px solid #1e293b", gridColumn:"span 2" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:"8px", marginBottom:"18px" }}>
+            <Building2 size={17} color="#38BDF8"/>
+            <h3 style={{ margin:0, color:"white", fontSize:"14px", fontWeight:"700" }}>Kosten per klant & subcategorie</h3>
+          </div>
+          {filteredClients.map(([clientId, clientData]) => (
+            <div key={clientId} style={{ marginBottom:"20px", background:"#1e293b", borderRadius:"10px", overflow:"hidden" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", background:"#172033", borderBottom:"1px solid #0f172a" }}>
+                <div>
+                  <span style={{ fontWeight:"700", color:"#38BDF8", fontSize:"14px" }}>{clientData.naam}</span>
+                  <span style={{ fontSize:"11px",color:"#475569",marginLeft:"10px" }}>{depts.find(d=>d.id===clientData.deptId)?.name}</span>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontWeight:"700", color:"white", fontSize:"15px" }}>{fmtEuro(clientData.kosten)}</div>
+                  <div style={{ fontSize:"10px",color:"#64748B" }}>{clientData.uren.toFixed(1)} uur</div>
+                </div>
+              </div>
+              {Object.entries(clientData.subcats).map(([subId, subData]) => (
+                <div key={subId}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 16px 10px 28px", borderBottom:"1px solid #0f172a" }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
+                      <span style={{ color:"#64748B", fontSize:"11px" }}>↳</span>
+                      <span style={{ color:"#94A3B8", fontSize:"13px" }}>{subData.naam}</span>
+                    </div>
+                    <div style={{ display:"flex", alignItems:"center", gap:"10px" }}>
+                      <div style={{ textAlign:"right" }}>
+                        <div style={{ color:"#94A3B8", fontSize:"13px", fontWeight:"600" }}>{fmtEuro(subData.kosten)}</div>
+                        <div style={{ fontSize:"9px",color:"#475569" }}>{subData.uren.toFixed(1)} uur</div>
+                      </div>
+                      <button onClick={() => setShowCalcFor(prev => prev===subId?null:subId)}
+                        style={{ background:"#0f172a", border:"1px solid #334155", color:"#64748B", borderRadius:"5px", padding:"3px 8px", fontSize:"10px", cursor:"pointer", display:"flex", alignItems:"center", gap:"4px" }}>
+                        {showCalcFor===subId ? <EyeOff size={11}/> : <Eye size={11}/>}
+                        Detail
+                      </button>
+                    </div>
+                  </div>
+                  {showCalcFor===subId && subData.details.length>0 && (
+                    <div style={{ padding:"12px 28px", background:"rgba(0,0,0,0.2)", borderBottom:"1px solid #0f172a" }}>
+                      {subData.details.map((d,i) => (
+                        <div key={i} style={{ fontSize:"11px", color:"#64748B", marginBottom:"5px", fontFamily:"monospace", display:"flex", alignItems:"center", gap:"8px" }}>
+                          <span style={{ width:"8px",height:"8px",borderRadius:"50%",background:d.empColor,display:"inline-block",flexShrink:0 }}/>
+                          <span style={{ color:"#94A3B8" }}>{d.empNaam}</span>:&nbsp;
+                          {d.bruto>0 && d.bruto!==d.netto ? (
+                            <><span style={{ color:"#F59E0B" }}>{d.bruto} blokjes</span> → <span style={{ color:"#10B981" }}>{d.netto.toFixed(2)}u netto</span></>
+                          ) : (
+                            <span style={{ color:"#10B981" }}>{d.netto.toFixed(2)}u</span>
+                          )}
+                          &nbsp;× {fmtEuro(d.loon)} = <span style={{ color:"white", fontWeight:"bold" }}>{fmtEuro(d.kosten)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ))}
+          {filteredClients.length === 0 && (
+            <div style={{ color:"#334155",textAlign:"center",padding:"40px",fontSize:"13px" }}>Geen data voor deze filter.</div>
+          )}
+        </section>
+      </div>
+    );
+  }
+
+  // ── Tab: Admin (gebruikersbeheer) ─────────────────────────────────────────
+  function AdminUserPanel() {
+    const [naam,       setNaam]       = useState("");
+    const [email,      setEmail]      = useState("");
+    const [password,   setPassword]   = useState("");
+    const [isAdminNew, setIsAdminNew] = useState(false);
+    const [loadingNew, setLoadingNew] = useState(false);
+    const [status,     setStatus]     = useState<{type:"ok"|"err";msg:string}|null>(null);
+    const [allUsers,   setAllUsers]   = useState<any[]>([]);
+
+    useEffect(() => {
+      sb.from("employees").select("id,name,email,is_admin,department_id,color").then(({ data }) => {
+        if (data) setAllUsers(data);
+      });
+    }, []);
+
+    async function addUser() {
+      if (!naam.trim() || !email.trim() || !password.trim()) {
+        setStatus({type:"err", msg:"Vul naam, e-mail en wachtwoord in."}); return;
+      }
+      setLoadingNew(true); setStatus(null);
+      try {
+        const { data: signUpData, error: signUpErr } = await sb.auth.signUp({ email, password });
+        if (signUpErr) throw signUpErr;
+        const userId = signUpData.user?.id;
+        if (!userId) throw new Error("Geen gebruikers-ID ontvangen van Supabase Auth.");
+        const colorIdx = employees.length % EMPLOYEE_COLORS.length;
+        const { data, error } = await sb.from("employees").insert({
+          id: userId, name: naam, email: email,
+          is_admin: isAdminNew, department_id: activeDeptId,
+          hours_per_week: 40, main_client_id: null,
+          sub_cat_ids: [], sub_cat_skills: {},
+          standard_off_days: ["Zaterdag","Zondag"], vacation_dates: [],
+          default_shift_id: null, hourly_wage: 0,
+          color: EMPLOYEE_COLORS[colorIdx], breaks: [],
+        }).select();
+        if (error) throw error;
+        if (data) {
+          setAllUsers(prev => [...prev, data[0]]);
+          setEmployees(prev => [...prev, {
+            id:userId, name:naam, departmentId:activeDeptId,
+            hoursPerWeek:40, mainClientId:"", subCatIds:[], subCatSkills:{},
+            standardOffDays:["Zaterdag","Zondag"], vacationDates:[],
+            defaultShiftId:"", hourlyWage:0, isAdmin:isAdminNew,
+            color:EMPLOYEE_COLORS[colorIdx], breaks:[],
+          }]);
+        }
+        setStatus({type:"ok", msg:`✅ ${naam} aangemaakt. Verificatiemail verstuurd naar ${email}.`});
+        setNaam(""); setEmail(""); setPassword("");
+      } catch(err: any) {
+        setStatus({type:"err", msg:"Fout: " + (err.message || "Onbekende fout")});
+      }
+      setLoadingNew(false);
+    }
+
+    async function toggleAdmin(userId: string, current: boolean) {
+      await sb.from("employees").update({is_admin:!current}).eq("id", userId);
+      setAllUsers(prev => prev.map(u => u.id===userId ? {...u,is_admin:!current} : u));
+      setEmployees(prev => prev.map(e => e.id===userId ? {...e,isAdmin:!current} : e));
+    }
+    async function removeUser(userId: string) {
+      if (!window.confirm("Gebruiker permanent verwijderen?")) return;
+      await sb.from("employees").delete().eq("id", userId);
+      setAllUsers(prev => prev.filter(u => u.id !== userId));
+      setEmployees(prev => prev.filter(e => e.id !== userId));
+    }
+
+    return (
+      <div style={{ display:"grid", gap:"20px", maxWidth:"700px" }}>
+        <div style={{ background:"#0f172a", borderRadius:"16px", padding:"28px", border:"1px solid #1e293b" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:"10px", marginBottom:"24px" }}>
+            <Shield size={20} color="#8B5CF6"/>
+            <h3 style={{ margin:0, color:"white", fontSize:"16px", fontWeight:"700" }}>Nieuwe gebruiker aanmaken</h3>
+          </div>
+          <div style={{ display:"grid", gap:"14px" }}>
+            <div>
+              <label style={{ fontSize:"11px", fontWeight:"600", color:"#64748B", display:"block", marginBottom:"6px", letterSpacing:"0.06em" }}>NAAM</label>
+              <input type="text" value={naam} onChange={e => setNaam(e.target.value)} placeholder="Jan de Vries"
+                style={{ width:"100%", padding:"10px 14px", background:"#1e293b", color:"white", border:"1px solid #334155", borderRadius:"8px", fontSize:"13px", boxSizing:"border-box", outline:"none" }}/>
+            </div>
+            <div>
+              <label style={{ fontSize:"11px", fontWeight:"600", color:"#64748B", display:"block", marginBottom:"6px", letterSpacing:"0.06em" }}>E-MAILADRES</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="jan@bedrijf.nl"
+                style={{ width:"100%", padding:"10px 14px", background:"#1e293b", color:"white", border:"1px solid #334155", borderRadius:"8px", fontSize:"13px", boxSizing:"border-box", outline:"none" }}/>
+            </div>
+            <div>
+              <label style={{ fontSize:"11px", fontWeight:"600", color:"#64748B", display:"block", marginBottom:"6px", letterSpacing:"0.06em" }}>TIJDELIJK WACHTWOORD</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••"
+                style={{ width:"100%", padding:"10px 14px", background:"#1e293b", color:"white", border:"1px solid #334155", borderRadius:"8px", fontSize:"13px", boxSizing:"border-box", outline:"none" }}/>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:"10px", background:"#1e293b", borderRadius:"8px", padding:"12px 14px" }}>
+              <button onClick={() => setIsAdminNew(v => !v)} style={{ background:"none", border:"none", cursor:"pointer", padding:0, display:"flex" }}>
+                {isAdminNew ? <ToggleRight size={28} color="#8B5CF6"/> : <ToggleLeft size={28} color="#475569"/>}
+              </button>
+              <div>
+                <div style={{ fontSize:"13px", color:isAdminNew?"#C4B5FD":"#94A3B8", fontWeight:"600" }}>{isAdminNew?"Beheerder":"Medewerker"}</div>
+                <div style={{ fontSize:"11px", color:"#475569" }}>{isAdminNew?"Toegang tot financieel & gebruikersbeheer":"Alleen planning en medewerkers"}</div>
+              </div>
+            </div>
+          </div>
+          {status && (
+            <div style={{ background:status.type==="ok"?"rgba(16,185,129,0.1)":"rgba(239,68,68,0.1)", border:`1px solid ${status.type==="ok"?"rgba(16,185,129,0.3)":"rgba(239,68,68,0.3)"}`, color:status.type==="ok"?"#6EE7B7":"#FCA5A5", borderRadius:"8px", padding:"10px 14px", marginTop:"16px", fontSize:"13px" }}>
+              {status.msg}
+            </div>
+          )}
+          <button onClick={addUser} disabled={loadingNew}
+            style={{ width:"100%", padding:"11px", background:"#8B5CF6", border:"none", color:"white", borderRadius:"8px", fontWeight:"700", cursor:loadingNew?"wait":"pointer", opacity:loadingNew?0.7:1, marginTop:"16px" }}>
+            {loadingNew ? "Aanmaken..." : "➕ Gebruiker aanmaken"}
+          </button>
+        </div>
+
+        <div style={{ background:"#0f172a", borderRadius:"16px", padding:"28px", border:"1px solid #1e293b" }}>
+          <h3 style={{ margin:"0 0 18px 0", color:"white", fontSize:"15px", fontWeight:"700" }}>Alle gebruikers ({allUsers.length})</h3>
+          {allUsers.map(u => (
+            <div key={u.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:"#1e293b", borderRadius:"8px", padding:"12px 14px", marginBottom:"8px", borderLeft:`3px solid ${u.color||"#3B82F6"}` }}>
+              <div style={{ display:"flex", alignItems:"center", gap:"10px" }}>
+                <div style={{ width:"10px",height:"10px",borderRadius:"50%",background:u.color||"#3B82F6" }}/>
+                <div>
+                  <div style={{ fontSize:"13px", fontWeight:"600", color:"white" }}>{u.name}</div>
+                  <div style={{ fontSize:"10px", color:"#64748B", marginTop:"2px" }}>{u.email || "Geen e-mail"}</div>
+                </div>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
+                <button onClick={() => toggleAdmin(u.id, u.is_admin)} title={u.is_admin?"Verwijder admin-rechten":"Maak admin"}
+                  style={{ background:u.is_admin?"rgba(139,92,246,0.15)":"#0f172a", border:`1px solid ${u.is_admin?"#8B5CF6":"#334155"}`, color:u.is_admin?"#8B5CF6":"#475569", borderRadius:"6px", padding:"4px 10px", fontSize:"11px", cursor:"pointer", fontWeight:"600" }}>
+                  {u.is_admin ? "⭐ Admin" : "👤 Medewerker"}
+                </button>
+                {u.id !== currentUserId && (
+                  <button onClick={() => removeUser(u.id)} style={{ background:"none", border:"none", color:"#EF4444", cursor:"pointer" }}><Trash2 size={14}/></button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Tabs configuratie ─────────────────────────────────────────────────────
   const tabs = [
-    { id:"planning",   label:"Planning",        icon:<Calendar size={14}/> },
-    { id:"medewerkers",label:"Medewerkers",      icon:<Users size={14}/> },
-    { id:"beheer",     label:"Klanten & Shifts", icon:<Settings size={14}/> },
+    { id:"planning",    label:"Planning",        icon:<Calendar size={14}/> },
+    { id:"medewerkers", label:"Medewerkers",      icon:<Users size={14}/> },
+    { id:"beheer",      label:"Klanten & Shifts", icon:<Settings size={14}/> },
     ...(isAdmin ? [
-      { id:"financieel", label:"Financieel",     icon:<Euro size={14}/> },
-      { id:"admin",      label:"Gebruikers",     icon:<Shield size={14}/> },
+      { id:"financieel", label:"Financieel",      icon:<Euro size={14}/> },
+      { id:"admin",      label:"Gebruikers",      icon:<Shield size={14}/> },
     ] : []),
   ];
 
+  if (loading) return (
+    <div style={{ minHeight:"100vh",background:"#020617",display:"flex",alignItems:"center",justifyContent:"center",color:"#475569",fontFamily:"'Segoe UI',system-ui,sans-serif",fontSize:"14px",flexDirection:"column",gap:"12px" }}>
+      <div style={{ width:"40px",height:"40px",border:"3px solid #1e293b",borderTop:"3px solid #3B82F6",borderRadius:"50%",animation:"spin 1s linear infinite" }}/>
+      <span>Data laden uit database...</span>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight:"100vh",background:"#020617",color:"#F8FAFC",fontFamily:"'Segoe UI',system-ui,sans-serif",padding:"16px" }}>
       {vacModal        && <VacationModal/>}
@@ -1478,17 +1852,20 @@ const isAdmin = currentEmp?.isAdmin ?? false;
 
       <nav className="screen-only" style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"18px",borderBottom:"1px solid #0f172a",paddingBottom:"14px",flexWrap:"wrap",gap:"10px" }}>
         <div style={{ display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap" }}>
-          <select value={activeDeptId} onChange={e => setActiveDeptId(e.target.value)}
-            style={{ background:"#3B82F6",color:"white",padding:"8px 12px",borderRadius:"8px",border:"none",fontWeight:"700",cursor:"pointer" }}>
-            {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
+          {depts.length === 0 ? (
+            <div style={{ color:"#475569",fontSize:"12px",padding:"8px" }}>Geen afdelingen — voeg toe via Klanten & Shifts</div>
+          ) : (
+            <select value={activeDeptId} onChange={e => setActiveDeptId(e.target.value)}
+              style={{ background:"#3B82F6",color:"white",padding:"8px 12px",borderRadius:"8px",border:"none",fontWeight:"700",cursor:"pointer" }}>
+              {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          )}
           {tabs.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id as any)}
-              style={{ background:activeTab===tab.id?"#0f172a":"transparent",color:activeTab===tab.id?"white":"#64748B",border:activeTab===tab.id?"1px solid #1e293b":"1px solid transparent",padding:"7px 14px",borderRadius:"8px",cursor:"pointer",fontWeight:activeTab===tab.id?"700":"400",fontSize:"13px",display:"flex",alignItems:"center",gap:"6px",transition:"all 0.15s" }}>
+              style={{ background:activeTab===tab.id?"#0f172a":"transparent",color:activeTab===tab.id?"white":"#64748B",border:activeTab===tab.id?"1px solid #1e293b":"1px solid transparent",padding:"7px 14px",borderRadius:"8px",cursor:"pointer",fontWeight:activeTab===tab.id?"700":"400",fontSize:"13px",display:"flex",alignItems:"center",gap:"6px" }}>
               {tab.icon}{tab.label}
             </button>
           ))}
-          {loading && <span style={{ fontSize:"11px",color:"#F59E0B",marginLeft:"4px" }}>⏳ Laden...</span>}
         </div>
 
         <div style={{ display:"flex",gap:"8px",alignItems:"center" }}>
@@ -1501,8 +1878,14 @@ const isAdmin = currentEmp?.isAdmin ?? false;
           <button onClick={runAutoPlanner} style={{ background:"#10B981",color:"white",border:"none",padding:"8px 14px",borderRadius:"8px",cursor:"pointer",fontWeight:"700",display:"flex",alignItems:"center",gap:"6px" }}>
             <Zap size={14}/>Auto-Plan
           </button>
-          <button onClick={() => { if(window.confirm("Volledige planning leegmaken?")) setSchedule({}); }}
-            style={{ background:"rgba(239,68,68,0.1)",color:"#EF4444",border:"1px solid rgba(239,68,68,0.2)",padding:"8px 14px",borderRadius:"8px",cursor:"pointer",display:"flex",alignItems:"center",gap:"6px" }}>
+          <button onClick={() => {
+            if(window.confirm("Volledige planning leegmaken?")) {
+              setSchedule({});
+              sb.from("schedule").delete().neq("slot_id","__never__").then(({error}) => {
+                if(error) console.error("Schedule leegmaken mislukt:", error.message);
+              });
+            }
+          }} style={{ background:"rgba(239,68,68,0.1)",color:"#EF4444",border:"1px solid rgba(239,68,68,0.2)",padding:"8px 14px",borderRadius:"8px",cursor:"pointer",display:"flex",alignItems:"center",gap:"6px" }}>
             <Trash2 size={14}/>Leeg
           </button>
           <button onClick={() => setShowPrintModal(true)} style={{ background:"#8B5CF6",color:"white",border:"none",padding:"8px 14px",borderRadius:"8px",cursor:"pointer",fontWeight:"700",display:"flex",alignItems:"center",gap:"6px" }}>
@@ -1519,11 +1902,7 @@ const isAdmin = currentEmp?.isAdmin ?? false;
         {activeTab==="medewerkers" && <TabMedewerkers/>}
         {activeTab==="beheer"      && <TabBeheer/>}
         {activeTab==="financieel"  && isAdmin && <TabFinancieel/>}
-        {activeTab==="admin"       && isAdmin && (
-          <div style={{ maxWidth:"600px" }}>
-            <AdminUserPanel/>
-          </div>
-        )}
+        {activeTab==="admin"       && isAdmin && <AdminUserPanel/>}
       </main>
 
       <style>{`
@@ -1535,21 +1914,20 @@ const isAdmin = currentEmp?.isAdmin ?? false;
         ::-webkit-scrollbar-track { background:#0f172a; }
         ::-webkit-scrollbar-thumb { background:#1e293b; border-radius:3px; }
         ::-webkit-scrollbar-thumb:hover { background:#334155; }
+        @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
     </div>
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// ROOT — AUTH WRAPPER
-// ═════════════════════════════════════════════════════════════════════════════
+// ─── Root ─────────────────────────────────────────────────────────────────────
 export default function AppRoot() {
   const [session,     setSession]     = useState<Session|null>(null);
   const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
     sb.auth.getSession().then(({data}) => { setSession(data.session); setAuthChecked(true); });
-    const { data: listener } = sb.auth.onAuthStateChange((_event, sess) => { setSession(sess); });
+    const { data: listener } = sb.auth.onAuthStateChange((_event, sess) => setSession(sess));
     return () => listener.subscription.unsubscribe();
   }, []);
 
