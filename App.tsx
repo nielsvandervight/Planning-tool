@@ -3,18 +3,16 @@ import { createClient, Session } from "@supabase/supabase-js";
 import {
   Users, Calendar, Settings, Euro, LogOut, ChevronLeft, ChevronRight,
   Plus, Trash2, Printer, Zap, ToggleLeft, ToggleRight, AlertTriangle,
-  Eye, EyeOff, TrendingUp, Building2, PieChart, Clock, Shield
+  Eye, EyeOff, TrendingUp, Building2, PieChart, Clock, Shield, Coffee
 } from "lucide-react";
 
 // ─── Supabase client ────────────────────────────────────────────────────────
 const SUPABASE_URL      = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error("FOUT: Supabase URL of Key ontbreekt in .env bestand!");
 }
-
-export const sb      = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+export const sb       = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 export const supabase = sb;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -23,6 +21,7 @@ interface Skill       { id: string; name: string; criteria: string; }
 interface ShiftDef    { id: string; label: string; hours: number[]; }
 interface Subcategory { id: string; clientId: string; name: string; targetSkills: string[]; }
 interface Client      { id: string; name: string; departmentId: string; fteNeeded: number; }
+interface BreakConfig { id: string; durationMinutes: number; label: string; }
 interface Employee {
   id: string; name: string; departmentId: string;
   hoursPerWeek: number; mainClientId: string;
@@ -33,42 +32,20 @@ interface Employee {
   defaultShiftId: string;
   hourlyWage: number;
   isAdmin: boolean;
+  color: string;
+  breaks: BreakConfig[];
 }
 interface SlotRow   { employeeId: string; shiftId: string; selectedHours: number[]; }
 interface SlotEntry { rows: SlotRow[]; }
-
-// ─── Seed data (fallback als DB leeg is) ────────────────────────────────────
-const SEED_DEPTS: Department[] = [
-  { id:"d1", name:"Warehouse" }, { id:"d2", name:"Customer Service" }
-];
-const SEED_SKILLS: Skill[] = [
-  { id:"s1", name:"SAP Classic",  criteria:"Kan zelfstandig werken in SAP ECC." },
-  { id:"s2", name:"SAP S/4 HANA", criteria:"Werkt goed met SAP S/4 HANA." }
-];
-const SEED_SHIFTS: ShiftDef[] = [
-  { id:"sh1", label:"07–16", hours:[7,8,9,10,11,12,13,14,15] },
-  { id:"sh2", label:"08–17", hours:[8,9,10,11,12,13,14,15,16] },
-  { id:"sh3", label:"09–18", hours:[9,10,11,12,13,14,15,16,17] },
-];
-const SEED_CLIENTS: Client[] = [
-  { id:"c1", name:"Lesaffre", departmentId:"d1", fteNeeded: 2.5 }
-];
-const SEED_SUBCATS: Subcategory[] = [
-  { id:"sub1", clientId:"c1", name:"Inbound",  targetSkills:["s1"] },
-  { id:"sub2", clientId:"c1", name:"Outbound", targetSkills:["s2"] }
-];
-const SEED_EMPS: Employee[] = [{
-  id:"e1", name:"Niels", departmentId:"d1", hoursPerWeek:40,
-  mainClientId:"c1", subCatIds:["sub1","sub2"],
-  subCatSkills:{ sub1:{s1:90}, sub2:{s2:50} },
-  standardOffDays:["Zaterdag","Zondag"], vacationDates:[],
-  defaultShiftId:"sh2", hourlyWage:18.50, isAdmin:true
-}];
 
 // ─── Constanten ─────────────────────────────────────────────────────────────
 const WORK_HOURS   = [5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22];
 const DAY_LABELS   = ["Maandag","Dinsdag","Woensdag","Donderdag","Vrijdag","Zaterdag","Zondag"];
 const MONTH_LABELS = ["Januari","Februari","Maart","April","Mei","Juni","Juli","Augustus","September","Oktober","November","December"];
+const EMPLOYEE_COLORS = [
+  "#3B82F6","#10B981","#F59E0B","#EF4444","#8B5CF6","#EC4899","#06B6D4","#84CC16",
+  "#F97316","#6366F1","#14B8A6","#F43F5E","#A78BFA","#34D399","#FBBF24","#60A5FA"
+];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function fmtDate(d: Date): string {
@@ -103,6 +80,20 @@ function groupByWeek(dates: Date[]): Date[][] {
 }
 function dayLabel(d: Date): string { return DAY_LABELS[d.getDay()===0?6:d.getDay()-1]; }
 
+// ─── Pauze berekening (configureerbaar per medewerker) ──────────────────────
+function totalBreakMinutes(emp: Employee, selectedHours: number[]): number {
+  const bruto = selectedHours?.length || 0;
+  if (!emp.breaks || emp.breaks.length === 0) {
+    // Fallback: standaard 30 min bij >= 9 uur
+    return bruto >= 9 ? 60 : 0;
+  }
+  return emp.breaks.reduce((sum, b) => sum + b.durationMinutes, 0);
+}
+function nettoUrenEmp(emp: Employee, selectedHours: number[]): number {
+  const bruto = selectedHours?.length || 0;
+  const breakH = totalBreakMinutes(emp, selectedHours) / 60;
+  return Math.max(0, bruto - breakH);
+}
 function nettoUren(selectedHours: number[]): number {
   const bruto = selectedHours?.length || 0;
   if (bruto >= 9) return bruto - 1;
@@ -111,6 +102,17 @@ function nettoUren(selectedHours: number[]): number {
 function fmtEuro(n: number): string {
   return new Intl.NumberFormat("nl-NL", { style:"currency", currency:"EUR" }).format(n);
 }
+function contrastColor(hex: string): string {
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  return (r*299+g*587+b*114)/1000 > 128 ? "#000000" : "#ffffff";
+}
+function getWeekKey(date: Date): string {
+  const sw = startOfWeek(date);
+  return fmtDate(sw);
+}
+
 function useDebounce<T extends (...args: any[]) => any>(fn: T, delay: number): T {
   const timer = useRef<ReturnType<typeof setTimeout>>();
   return useCallback((...args: Parameters<T>) => {
@@ -119,19 +121,22 @@ function useDebounce<T extends (...args: any[]) => any>(fn: T, delay: number): T
   }, [fn, delay]) as T;
 }
 
-// ─── Print CSS ───────────────────────────────────────────────────────────────
+// ─── Print CSS (tijdslijn-weergave) ─────────────────────────────────────────
 function buildPrintCSS(size: "A4"|"A3"): string {
-  const fs=size==="A4"?"5.8pt":"7.5pt", hfs=size==="A4"?"5pt":"6.5pt";
-  const colW=size==="A4"?"52px":"72px", labelW=size==="A4"?"80px":"110px";
-  return `@media print{*{box-sizing:border-box}body{margin:0;background:#fff!important;color:#111!important;font-family:'Helvetica Neue',Arial,sans-serif}.screen-only{display:none!important}.print-wrap{display:block!important}.pw-page{page-break-after:always;padding:0}.pw-page:last-child{page-break-after:auto}.pw-header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2.5px solid #0f172a;padding-bottom:5px;margin-bottom:8px}.pw-title{font-size:${size==="A4"?"13pt":"16pt"};font-weight:900;color:#0f172a}.pw-sub{font-size:${hfs};color:#64748b;margin-top:2px}.pw-meta{font-size:${hfs};color:#94a3b8;text-align:right}.pw-tbl{border-collapse:collapse;width:100%}.pw-tbl th{background:#1e293b!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#f8fafc!important;font-size:${hfs};font-weight:700;padding:3px;text-align:center}.pw-tbl td{border:1px solid #e2e8f0;font-size:${fs};padding:2px 3px;vertical-align:top}.pw-tbl tr.client-hdr td{background:#0f172a!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#38bdf8!important;font-weight:700;font-size:${hfs};padding:3px 5px}.pw-tbl tr.sub-row td:first-child{background:#f8fafc!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#475569;padding-left:8px;min-width:${labelW};max-width:${labelW};word-wrap:break-word}.pw-tbl .col-label{min-width:${labelW};max-width:${labelW}}.pw-tbl .col-day{min-width:${colW};max-width:${colW};width:${colW}}.pw-emp{font-weight:700;color:#1e293b;font-size:${fs}}.pw-hrs{color:#64748b;font-size:${size==="A4"?"4.5pt":"5.5pt"}}.pw-badge{display:inline-block;background:#3b82f6!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#fff!important;border-radius:2px;padding:0 2px;font-size:4pt;margin-left:2px}.pw-emp2{color:#7c3aed}.pw-fte-ok{color:#059669!important}.pw-fte-low{color:#dc2626!important}@page{size:${size} landscape;margin:8mm}}`;
+  const fs = size==="A4" ? "5.8pt" : "7.5pt";
+  const hfs = size==="A4" ? "5pt" : "6.5pt";
+  const colW = size==="A4" ? "52px" : "72px";
+  const labelW = size==="A4" ? "80px" : "110px";
+  const timeW = size==="A4" ? "22px" : "28px";
+  return `@media print{*{box-sizing:border-box}body{margin:0;background:#fff!important;color:#111!important;font-family:'Helvetica Neue',Arial,sans-serif}.screen-only{display:none!important}.print-wrap{display:block!important}.pw-page{page-break-after:always;padding:0}.pw-page:last-child{page-break-after:auto}.pw-header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2.5px solid #0f172a;padding-bottom:5px;margin-bottom:8px}.pw-title{font-size:${size==="A4"?"13pt":"16pt"};font-weight:900;color:#0f172a}.pw-sub{font-size:${hfs};color:#64748b;margin-top:2px}.pw-meta{font-size:${hfs};color:#94a3b8;text-align:right}.pw-tbl{border-collapse:collapse;width:100%}.pw-tbl th{background:#1e293b!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#f8fafc!important;font-size:${hfs};font-weight:700;padding:3px;text-align:center}.pw-tbl td{border:1px solid #e2e8f0;font-size:${fs};padding:0;vertical-align:top}.pw-tbl tr.client-hdr td{background:#0f172a!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#38bdf8!important;font-weight:700;font-size:${hfs};padding:3px 5px}.pw-tbl tr.sub-row td:first-child{background:#f8fafc!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#475569;padding-left:8px;min-width:${labelW};max-width:${labelW};word-wrap:break-word}.pw-tbl .col-label{min-width:${labelW};max-width:${labelW}}.pw-tbl .col-day{min-width:${colW};max-width:${colW};width:${colW}}.pw-tbl .col-time{min-width:${timeW};max-width:${timeW};width:${timeW};text-align:center;font-size:4pt;color:#94a3b8;background:#f8fafc!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;padding:1px}.pw-timeline-cell{position:relative;height:100%}.pw-emp-block{-webkit-print-color-adjust:exact;print-color-adjust:exact;border-radius:2px;padding:1px 2px;margin:1px;font-size:${fs};font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pw-badge{display:inline-block;background:#3b82f6!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#fff!important;border-radius:2px;padding:0 2px;font-size:4pt;margin-left:2px}.pw-fte-ok{color:#059669!important}.pw-fte-low{color:#dc2626!important}@page{size:${size} landscape;margin:8mm}}`;
 }
 
 // ─── Login ───────────────────────────────────────────────────────────────────
 function LoginScreen() {
-  const [email,    setEmail]    = useState("");
+  const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
-  const [error,    setError]    = useState("");
-  const [loading,  setLoading]  = useState(false);
+  const [error, setError]       = useState("");
+  const [loading, setLoading]   = useState(false);
 
   async function handleLogin() {
     setLoading(true); setError("");
@@ -152,8 +157,7 @@ function LoginScreen() {
         </div>
         <div style={{ marginBottom:"16px" }}>
           <label style={{ fontSize:"11px", fontWeight:"600", color:"#64748B", display:"block", marginBottom:"6px", letterSpacing:"0.06em" }}>E-MAILADRES</label>
-          <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-            placeholder="naam@bedrijf.nl"
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="naam@bedrijf.nl"
             style={{ width:"100%", padding:"11px 14px", background:"#1e293b", color:"white", border:"1px solid #334155", borderRadius:"10px", fontSize:"14px", boxSizing:"border-box", outline:"none" }}/>
         </div>
         <div style={{ marginBottom:"24px" }}>
@@ -176,15 +180,15 @@ function LoginScreen() {
 function App({ session }: { session: Session }) {
   const [activeTab, setActiveTab] = useState<"planning"|"medewerkers"|"beheer"|"financieel"|"admin">("planning");
 
-  const [depts,     setDeptsState]     = useState<Department[]>(SEED_DEPTS);
-  const [skills,    setSkillsState]    = useState<Skill[]>(SEED_SKILLS);
-  const [shiftDefs, setShiftDefsState] = useState<ShiftDef[]>(SEED_SHIFTS);
-  const [clients,   setClientsState]   = useState<Client[]>(SEED_CLIENTS);
-  const [subcats,   setSubcatsState]   = useState<Subcategory[]>(SEED_SUBCATS);
-  const [employees, setEmployees]      = useState<Employee[]>(SEED_EMPS);
+  const [depts,     setDeptsState]     = useState<Department[]>([]);
+  const [skills,    setSkillsState]    = useState<Skill[]>([]);
+  const [shiftDefs, setShiftDefsState] = useState<ShiftDef[]>([]);
+  const [clients,   setClientsState]   = useState<Client[]>([]);
+  const [subcats,   setSubcatsState]   = useState<Subcategory[]>([]);
+  const [employees, setEmployees]      = useState<Employee[]>([]);
   const [schedule,  setSchedule]       = useState<Record<string,SlotEntry>>({});
 
-  const [activeDeptId,   setActiveDeptId]   = useState("d1");
+  const [activeDeptId,   setActiveDeptId]   = useState("");
   const [viewType,       setViewType]       = useState<"week"|"maand">("week");
   const [useFTE,         setUseFTE]         = useState(true);
   const [printSize,      setPrintSize]      = useState<"A4"|"A3">("A4");
@@ -204,7 +208,6 @@ function App({ session }: { session: Session }) {
   const [customEnd,       setCustomEnd]       = useState(17);
   const [showCalcFor,     setShowCalcFor]     = useState<string|null>(null);
 
-  // ── Huidig ingelogde medewerker ──
   const currentUserId = session.user.id;
   const currentEmp    = employees.find(e => e.id === currentUserId) ?? employees.find(e => e.isAdmin);
   const isAdmin       = currentEmp?.isAdmin ?? false;
@@ -234,7 +237,8 @@ function App({ session }: { session: Session }) {
           subCatIds:x.sub_cat_ids||[], subCatSkills:x.sub_cat_skills||{},
           standardOffDays:x.standard_off_days||[], vacationDates:x.vacation_dates||[],
           defaultShiftId:x.default_shift_id||"", hourlyWage:x.hourly_wage||0,
-          isAdmin:x.is_admin||false
+          isAdmin:x.is_admin||false, color:x.color||EMPLOYEE_COLORS[0],
+          breaks:x.breaks||[],
         })));
         if (schr.data?.length) {
           const built: Record<string,SlotEntry> = {};
@@ -242,12 +246,12 @@ function App({ session }: { session: Session }) {
           setSchedule(built);
         }
         if (dr.data?.length) setActiveDeptId(dr.data[0].id);
-      } catch(e) { console.warn("Supabase niet bereikbaar, seed data gebruikt:", e); }
+      } catch(e) { console.warn("Supabase niet bereikbaar:", e); }
       setLoading(false);
     })();
   }, []);
 
-  // ── Sync helpers (debounced) ─────────────────────────────────────────────
+  // ── Sync helpers ─────────────────────────────────────────────────────────
   const _syncCell = useCallback(async (slotId: string, entry: SlotEntry) => {
     try { await sb.from("schedule").upsert({ slot_id:slotId, rows:entry.rows, updated_at:new Date().toISOString() }, { onConflict:"slot_id" }); }
     catch(e) { console.error("schedule sync fout", e); }
@@ -262,48 +266,44 @@ function App({ session }: { session: Session }) {
         sub_cat_ids:emp.subCatIds, sub_cat_skills:emp.subCatSkills,
         standard_off_days:emp.standardOffDays, vacation_dates:emp.vacationDates,
         default_shift_id:emp.defaultShiftId||null, hourly_wage:emp.hourlyWage||0,
-        is_admin:emp.isAdmin||false
+        is_admin:emp.isAdmin||false, color:emp.color||EMPLOYEE_COLORS[0],
+        breaks:emp.breaks||[],
       }, { onConflict:"id" });
     } catch(e) { console.error("employee sync fout", e); }
   }, []);
   const syncEmployee = useDebounce(_syncEmp, 1000);
 
-  // Dept sync
   const _syncDept = useCallback(async (dept: Department) => {
     try { await sb.from("departments").upsert({ id:dept.id, name:dept.name }, { onConflict:"id" }); }
     catch(e) { console.error("dept sync fout", e); }
   }, []);
   const syncDept = useDebounce(_syncDept, 1000);
 
-  // Skill sync
   const _syncSkill = useCallback(async (skill: Skill) => {
     try { await sb.from("skills").upsert({ id:skill.id, name:skill.name, criteria:skill.criteria }, { onConflict:"id" }); }
     catch(e) { console.error("skill sync fout", e); }
   }, []);
   const syncSkill = useDebounce(_syncSkill, 1000);
 
-  // Client sync
   const _syncClient = useCallback(async (client: Client) => {
     try { await sb.from("clients").upsert({ id:client.id, name:client.name, department_id:client.departmentId, fte_needed:client.fteNeeded }, { onConflict:"id" }); }
     catch(e) { console.error("client sync fout", e); }
   }, []);
   const syncClient = useDebounce(_syncClient, 1000);
 
-  // Subcat sync
   const _syncSubcat = useCallback(async (sub: Subcategory) => {
     try { await sb.from("subcategories").upsert({ id:sub.id, client_id:sub.clientId, name:sub.name, target_skills:sub.targetSkills }, { onConflict:"id" }); }
     catch(e) { console.error("subcat sync fout", e); }
   }, []);
   const syncSubcat = useDebounce(_syncSubcat, 1000);
 
-  // ShiftDef sync
   const _syncShift = useCallback(async (sh: ShiftDef) => {
     try { await sb.from("shift_defs").upsert({ id:sh.id, label:sh.label, hours:sh.hours }, { onConflict:"id" }); }
     catch(e) { console.error("shift sync fout", e); }
   }, []);
   const syncShift = useDebounce(_syncShift, 1000);
 
-  // ── Update functies (lokaal + DB) ────────────────────────────────────────
+  // ── Update functies ──────────────────────────────────────────────────────
   function updSchedule(slotId: string, entry: SlotEntry) {
     setSchedule(prev => ({ ...prev, [slotId]:entry }));
     syncCell(slotId, entry);
@@ -312,23 +312,12 @@ function App({ session }: { session: Session }) {
     setEmployees(prev => prev.map(e => e.id===emp.id ? emp : e));
     syncEmployee(emp);
   }
-  function setDepts(fn: (prev: Department[]) => Department[]) {
-    setDeptsState(fn);
-  }
-  function setSkills(fn: (prev: Skill[]) => Skill[]) {
-    setSkillsState(fn);
-  }
-  function setClients(fn: (prev: Client[]) => Client[]) {
-    setClientsState(fn);
-  }
-  function setSubcats(fn: (prev: Subcategory[]) => Subcategory[]) {
-    setSubcatsState(fn);
-  }
-  function setShiftDefs(fn: (prev: ShiftDef[]) => ShiftDef[]) {
-    setShiftDefsState(fn);
-  }
+  function setDepts(fn: (prev: Department[]) => Department[]) { setDeptsState(fn); }
+  function setSkills(fn: (prev: Skill[]) => Skill[]) { setSkillsState(fn); }
+  function setClients(fn: (prev: Client[]) => Client[]) { setClientsState(fn); }
+  function setSubcats(fn: (prev: Subcategory[]) => Subcategory[]) { setSubcatsState(fn); }
+  function setShiftDefs(fn: (prev: ShiftDef[]) => ShiftDef[]) { setShiftDefsState(fn); }
 
-  // Sync verwijderingen direct (geen debounce nodig)
   async function deleteDept(id: string) {
     setDeptsState(prev => prev.filter(d => d.id !== id));
     await sb.from("departments").delete().eq("id", id);
@@ -378,6 +367,9 @@ function App({ session }: { session: Session }) {
     if (emp.vacationDates.includes(fmtDate(date))) return false;
     return true;
   }
+  function isWeekend(date: Date): boolean {
+    return date.getDay() === 0 || date.getDay() === 6;
+  }
   function dailyHours(emp: Employee): number {
     const wd = 7 - emp.standardOffDays.length;
     return wd > 0 ? Math.round(emp.hoursPerWeek/wd) : 8;
@@ -393,6 +385,27 @@ function App({ session }: { session: Session }) {
     return Math.round(vals.reduce((a,b)=>a+b,0)/vals.length);
   }
   function getShift(shiftId: string): ShiftDef|undefined { return shiftDefs.find(s => s.id===shiftId); }
+
+  // ── Uurberekening strikt per week (niet per weergave-periode) ────────────
+  function geplandUrenDezeWeek(empId: string, referenceDate: Date): number {
+    const sw = startOfWeek(referenceDate);
+    let total = 0;
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(sw); d.setDate(sw.getDate() + i);
+      const ds = fmtDate(d);
+      const emp = employees.find(e => e.id === empId);
+      Object.entries(schedule)
+        .filter(([slotId]) => slotId.startsWith(ds))
+        .forEach(([,entry]) => {
+          entry.rows?.forEach(r => {
+            if (r.employeeId === empId) {
+              total += emp ? nettoUrenEmp(emp, r.selectedHours) : nettoUren(r.selectedHours);
+            }
+          });
+        });
+    }
+    return total;
+  }
 
   function fteForClient(clientId: string): number {
     const dates = displayDates();
@@ -416,28 +429,23 @@ function App({ session }: { session: Session }) {
     return uniquePersonDays / workingDays;
   }
 
-  function geplandUrenDezePeriode(empId: string): number {
-    const dates = displayDates(); let total = 0;
-    dates.forEach(date => {
-      const ds = fmtDate(date);
-      Object.entries(schedule)
-        .filter(([slotId]) => slotId.startsWith(ds))
-        .forEach(([,entry]) => {
-          entry.rows?.forEach(r => { if (r.employeeId===empId) total += nettoUren(r.selectedHours); });
-        });
-    });
-    return total;
-  }
-
   // ── Auto planner ─────────────────────────────────────────────────────────
   function runAutoPlanner() {
     const dates    = displayDates();
     const dClients = clients.filter(c => c.departmentId===activeDeptId);
     const dEmps    = employees.filter(e => e.departmentId===activeDeptId);
     const newSched = {...schedule};
+    // Tijdelijke urenteller per week per medewerker
+    const weeklyHoursTracker: Record<string, Record<string, number>> = {};
+
     dates.forEach(date => {
+      // Auto-planner slaat altijd weekend over
+      if (isWeekend(date)) return;
+
       const ds = fmtDate(date);
+      const weekKey = getWeekKey(date);
       const usedToday: string[] = [];
+
       dClients.forEach(client => {
         const csubs = subcats.filter(s => s.clientId===client.id);
         const slots = csubs.length
@@ -449,6 +457,10 @@ function App({ session }: { session: Session }) {
             if (!isAvail(e, date)) return false;
             if (usedToday.includes(e.id)) return false;
             if (sub && !e.subCatIds.includes(sub.id)) return false;
+            // Check weeklimieten
+            if (!weeklyHoursTracker[weekKey]) weeklyHoursTracker[weekKey] = {};
+            const alreadyPlanned = (weeklyHoursTracker[weekKey][e.id] || 0) + geplandUrenDezeWeek(e.id, date);
+            if (alreadyPlanned >= e.hoursPerWeek) return false;
             return true;
           }).sort((a,b) => {
             const as_ = sub ? calcScore(a,sub) : 0;
@@ -458,7 +470,10 @@ function App({ session }: { session: Session }) {
           if (candidates[0]) {
             const emp = candidates[0];
             usedToday.push(emp.id);
+            // Gebruik defaultShiftId van de medewerker
             const chosenShift = (emp.defaultShiftId ? getShift(emp.defaultShiftId) : undefined) || shiftDefs[1] || shiftDefs[0];
+            if (!weeklyHoursTracker[weekKey]) weeklyHoursTracker[weekKey] = {};
+            weeklyHoursTracker[weekKey][emp.id] = (weeklyHoursTracker[weekKey][emp.id] || 0) + nettoUrenEmp(emp, chosenShift?.hours || []);
             newSched[slotId] = { rows:[{ employeeId:emp.id, shiftId:chosenShift?.id||"sh2", selectedHours:chosenShift?.hours||defaultHours(emp) }] };
           }
         });
@@ -500,8 +515,8 @@ function App({ session }: { session: Session }) {
       const usedIds = entry.rows.filter((_,i) => i!==rowIdx).map(r => r.employeeId).filter(Boolean);
       return avail.filter(e => !usedIds.includes(e.id));
     }
-    function isOverLimit(emp: Employee): boolean {
-      return geplandUrenDezePeriode(emp.id) >= emp.hoursPerWeek;
+    function isOverLimit(emp: Employee, date: Date): boolean {
+      return geplandUrenDezeWeek(emp.id, date) >= emp.hoursPerWeek;
     }
     function addRow() {
       if (entry.rows.length>=2) return;
@@ -534,27 +549,28 @@ function App({ session }: { session: Session }) {
     return (
       <td style={{ padding:"3px", verticalAlign:"top", minWidth:"175px", borderBottom:"1px solid #1e293b" }}>
         {entry.rows.map((row,ri) => {
-          const rowColor  = ri===0 ? "#3B82F6" : "#7C3AED";
           const emp       = employees.find(e => e.id===row.employeeId);
-          const overLimit = emp ? isOverLimit(emp) : false;
-          const netto     = nettoUren(row.selectedHours);
+          const empColor  = emp?.color || (ri===0 ? "#3B82F6" : "#7C3AED");
+          const textCol   = emp ? contrastColor(empColor) : "white";
+          const overLimit = emp ? isOverLimit(emp, date) : false;
+          const netto     = emp ? nettoUrenEmp(emp, row.selectedHours) : nettoUren(row.selectedHours);
           const bruto     = row.selectedHours?.length || 0;
           return (
             <div key={ri} style={{ marginBottom:ri<entry.rows.length-1?"4px":0, borderBottom:ri<entry.rows.length-1?"1px dashed #1e293b":"none", paddingBottom:ri<entry.rows.length-1?"4px":0 }}>
               <div style={{ display:"flex", gap:"2px", marginBottom:"2px" }}>
                 <select value={row.employeeId} onChange={e => setEmp(ri,e.target.value)}
-                  style={{ flex:1, padding:"4px 3px", borderRadius:"4px", background:row.employeeId?rowColor:"#0f172a", color:"white", border:overLimit?"2px solid #EF4444":"1px solid #1e293b", fontSize:"11px", cursor:"pointer" }}>
+                  style={{ flex:1, padding:"4px 3px", borderRadius:"4px", background:row.employeeId?empColor:"#0f172a", color:row.employeeId?textCol:"white", border:overLimit?"2px solid #EF4444":"1px solid #1e293b", fontSize:"11px", cursor:"pointer", fontWeight:row.employeeId?"700":"400" }}>
                   <option value="">—</option>
                   {availForRow(ri).map(e => {
-                    const ol = isOverLimit(e);
-                    return <option key={e.id} value={e.id} style={{ color:ol?"#EF4444":"white" }}>{e.name}{ol?" ⚠":""}</option>;
+                    const ol = isOverLimit(e, date);
+                    return <option key={e.id} value={e.id} style={{ color:ol?"#EF4444":"white", background:"#1e293b" }}>{e.name}{ol?" ⚠":""}</option>;
                   })}
                 </select>
                 <button onClick={() => removeRow(ri)} style={{ background:"#1e293b", border:"none", color:"#475569", borderRadius:"3px", width:"18px", cursor:"pointer", fontSize:"10px" }}>✕</button>
               </div>
               {overLimit && row.employeeId && (
                 <div style={{ fontSize:"9px", color:"#EF4444", marginBottom:"2px", display:"flex", alignItems:"center", gap:"3px" }}>
-                  <AlertTriangle size={9}/> Contracturen overschreden
+                  <AlertTriangle size={9}/> Weekuren overschreden
                 </div>
               )}
               {row.employeeId && (
@@ -573,12 +589,16 @@ function App({ session }: { session: Session }) {
                 {WORK_HOURS.map(h => {
                   const on = row.selectedHours?.includes(h);
                   return <div key={h} onClick={() => row.employeeId && toggleHour(ri,h)} title={`${String(h).padStart(2,"0")}:00`}
-                    style={{ flex:1, height:"11px", borderRadius:"1px", cursor:row.employeeId?"pointer":"default", background:on?(ri===0?"#10B981":"#A78BFA"):"#1e293b" }}/>;
+                    style={{ flex:1, height:"11px", borderRadius:"1px", cursor:row.employeeId?"pointer":"default", background:on?empColor:"#1e293b" }}/>;
                 })}
               </div>
               {row.employeeId && (
                 <div style={{ fontSize:"9px", textAlign:"right", color:"#475569", marginTop:"1px" }}>
-                  {netto}u netto{bruto>=9 && <span style={{ color:"#F59E0B" }}> (−1u pauze)</span>}
+                  {netto.toFixed(1)}u netto
+                  {emp && emp.breaks && emp.breaks.length > 0 && (
+                    <span style={{ color:"#F59E0B" }}> (−{totalBreakMinutes(emp, row.selectedHours)}min pauze)</span>
+                  )}
+                  {(!emp?.breaks || emp.breaks.length === 0) && bruto>=9 && <span style={{ color:"#F59E0B" }}> (−1u pauze)</span>}
                 </div>
               )}
             </div>
@@ -737,10 +757,21 @@ function App({ session }: { session: Session }) {
     );
   }
 
-  // ── Print view ────────────────────────────────────────────────────────────
+  // ── Print view (tijdslijn per uur) ────────────────────────────────────────
   function PrintView() {
     const allDates = displayDates();
     const weeks    = viewType==="maand" ? groupByWeek(allDates) : [allDates];
+    // Verzamel alle uren die gebruikt worden
+    const allUsedHours = WORK_HOURS.filter(h => {
+      return allDates.some(date => {
+        const ds = fmtDate(date);
+        return Object.entries(schedule).some(([slotId, entry]) =>
+          slotId.startsWith(ds) && entry.rows?.some(r => r.selectedHours?.includes(h))
+        );
+      });
+    });
+    const timelineHours = allUsedHours.length > 0 ? allUsedHours : [7,8,9,10,11,12,13,14,15,16,17];
+
     return (
       <div className="print-wrap" style={{ display:"none" }}>
         {weeks.map((weekDates,wi) => (
@@ -759,66 +790,113 @@ function App({ session }: { session: Session }) {
                 <div>{activeDept?.name} · {deptEmployees.length} mw · {deptClients.length} klanten</div>
               </div>
             </div>
-            <table className="pw-tbl">
-              <thead>
-                <tr>
-                  <th className="col-label" style={{ textAlign:"left" }}>Klant / Taak</th>
-                  {weekDates.map(date => {
-                    const isWE = date.getDay()===0||date.getDay()===6;
-                    return <th key={fmtDate(date)} className="col-day" style={{ color:isWE?"#fca5a5":"#f8fafc" }}>
-                      {dayLabel(date).slice(0,2)} {date.getDate()}/{date.getMonth()+1}
-                    </th>;
-                  })}
-                </tr>
-              </thead>
-              <tbody>
-                {deptClients.map(client => {
-                  const csubs   = subcats.filter(s => s.clientId===client.id);
-                  const fte     = fteForClient(client.id);
-                  const fteDiff = fte - client.fteNeeded;
-                  return (
-                    <React.Fragment key={client.id}>
-                      <tr className="client-hdr">
-                        <td colSpan={weekDates.length+1}>
-                          {client.name}
-                          {useFTE && <span style={{ marginLeft:"10px", fontSize:"4.5pt", opacity:0.8 }}>
-                            Doel: {client.fteNeeded} FTE · Ingepland: {fte.toFixed(2)} FTE
-                            <span className={fteDiff>=0?"pw-fte-ok":"pw-fte-low"}> ({fteDiff>=0?"+":""}{fteDiff.toFixed(2)})</span>
-                          </span>}
-                        </td>
+
+            {/* Tijdslijn tabel per dag */}
+            {weekDates.map(date => {
+              const ds = fmtDate(date);
+              const isWE = date.getDay()===0||date.getDay()===6;
+              const dayEntries: {sub:Subcategory|{id:string;name:string;clientId:string;targetSkills:string[]};client:Client;rows:SlotRow[]}[] = [];
+              deptClients.forEach(client => {
+                const csubs = subcats.filter(s => s.clientId===client.id);
+                (csubs.length ? csubs : [{id:`client-${client.id}`,clientId:client.id,name:"Algemeen",targetSkills:[]}]).forEach(sub => {
+                  const entry = schedule[`${ds}-${sub.id}`];
+                  if (entry?.rows?.length) {
+                    dayEntries.push({sub, client, rows:entry.rows});
+                  }
+                });
+              });
+              if (dayEntries.length === 0) return null;
+              return (
+                <div key={ds} style={{ marginBottom:"8px", pageBreakInside:"avoid" }}>
+                  <div style={{ background:"#1e293b", color:isWE?"#fca5a5":"#f8fafc", padding:"3px 6px", fontSize:"7pt", fontWeight:"700", marginBottom:"2px" }}>
+                    {dayLabel(date)} {date.getDate()}/{date.getMonth()+1}/{date.getFullYear()}
+                  </div>
+                  <table className="pw-tbl" style={{ tableLayout:"fixed" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width:"100px", textAlign:"left", padding:"2px 4px" }}>Klant / Taak</th>
+                        {timelineHours.map(h => (
+                          <th key={h} style={{ width:"24px", fontSize:"5pt", padding:"2px 0" }}>
+                            {String(h).padStart(2,"0")}
+                          </th>
+                        ))}
+                        <th style={{ width:"40px", fontSize:"5pt" }}>Totaal</th>
                       </tr>
-                      {(csubs.length?csubs:[{id:`client-${client.id}`,clientId:client.id,name:"Algemeen",targetSkills:[]}]).map(sub => (
-                        <tr key={sub.id} className="sub-row">
-                          <td className="col-label">↳ {sub.name}</td>
-                          {weekDates.map(date => {
-                            const entry = schedule[`${fmtDate(date)}-${sub.id}`];
-                            return (
-                              <td key={fmtDate(date)} className="col-day">
-                                {entry?.rows?.map((row,ri) => {
-                                  const emp = employees.find(e => e.id===row.employeeId);
-                                  if (!emp) return null;
-                                  const minH = row.selectedHours?.length ? Math.min(...row.selectedHours) : "?";
-                                  const maxH = row.selectedHours?.length ? Math.max(...row.selectedHours)+1 : "?";
-                                  return (
-                                    <div key={ri} style={{ borderBottom:ri<(entry.rows.length-1)?"1px dashed #ccc":"none", paddingBottom:"1px", marginBottom:"1px" }}>
-                                      <div className={`pw-emp${ri>0?" pw-emp2":""}`}>{emp.name}</div>
-                                      <div className="pw-hrs">
-                                        {String(minH).padStart(2,"0")}–{String(maxH).padStart(2,"0")}
-                                        <span className="pw-badge">{nettoUren(row.selectedHours)}u</span>
-                                      </div>
-                                    </div>
-                                  );
-                                })}
+                    </thead>
+                    <tbody>
+                      {dayEntries.map(({sub, client, rows}) => (
+                        rows.map((row, ri) => {
+                          const emp = employees.find(e => e.id===row.employeeId);
+                          if (!emp) return null;
+                          const netto = nettoUrenEmp(emp, row.selectedHours);
+                          const empColor = emp.color || EMPLOYEE_COLORS[0];
+                          const textCol  = contrastColor(empColor);
+                          return (
+                            <tr key={`${sub.id}-${ri}`} className="sub-row">
+                              <td style={{ padding:"2px 4px", fontSize:"5pt" }}>
+                                <div style={{ fontWeight:"700", color:"#1e293b", fontSize:"5pt" }}>{client.name}</div>
+                                <div style={{ color:"#64748b", fontSize:"4.5pt" }}>↳ {sub.name}</div>
                               </td>
-                            );
-                          })}
-                        </tr>
+                              {timelineHours.map(h => {
+                                const isActive = row.selectedHours?.includes(h);
+                                return (
+                                  <td key={h} style={{ padding:"1px", height:"18px" }}>
+                                    {isActive && (
+                                      <div style={{
+                                        background:empColor,
+                                        height:"100%",
+                                        minHeight:"16px",
+                                        display:"flex",
+                                        alignItems:"center",
+                                        justifyContent:"center",
+                                        fontSize:"4pt",
+                                        color:textCol,
+                                        fontWeight:"700",
+                                        WebkitPrintColorAdjust:"exact",
+                                        printColorAdjust:"exact",
+                                      }}>
+                                        {ri===0 && row.selectedHours?.indexOf(h)===Math.floor(row.selectedHours.length/2) ? emp.name.split(" ")[0] : ""}
+                                      </div>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                              <td style={{ padding:"2px", textAlign:"center" }}>
+                                <div style={{ fontSize:"5pt", fontWeight:"700", background:empColor, color:textCol, borderRadius:"2px", padding:"1px 3px", WebkitPrintColorAdjust:"exact", printColorAdjust:"exact" }}>
+                                  {netto.toFixed(1)}u
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
                       ))}
-                    </React.Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
+
+            {/* FTE overzicht */}
+            {useFTE && (
+              <div style={{ marginTop:"8px", borderTop:"1px solid #1e293b", paddingTop:"5px" }}>
+                <div style={{ fontSize:"6pt", color:"#475569", fontWeight:"700", marginBottom:"4px" }}>FTE OVERZICHT</div>
+                <div style={{ display:"flex", gap:"12px", flexWrap:"wrap" }}>
+                  {deptClients.map(client => {
+                    const fte = fteForClient(client.id);
+                    const fteDiff = fte - client.fteNeeded;
+                    return (
+                      <div key={client.id} style={{ fontSize:"5.5pt" }}>
+                        <span style={{ fontWeight:"700" }}>{client.name}:</span>{" "}
+                        {fte.toFixed(2)} / {client.fteNeeded} FTE{" "}
+                        <span style={{ color:fteDiff>=0?"#059669":"#dc2626" }}>
+                          ({fteDiff>=0?"+":""}{fteDiff.toFixed(2)})
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -859,8 +937,13 @@ function App({ session }: { session: Session }) {
             <button onClick={() => setViewType("maand")}
               style={{ background:viewType==="maand"?"#3B82F6":"transparent",border:"none",color:"white",padding:"5px 14px",borderRadius:"6px",cursor:"pointer",fontWeight:viewType==="maand"?"700":"400" }}>Maand</button>
           </div>
-          <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:"6px", fontSize:"10px", color:"#475569" }}>
-            <span style={{ color:"#10B981" }}>■</span> 1e &nbsp;<span style={{ color:"#A78BFA" }}>■</span> 2e
+          <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:"6px", fontSize:"10px", color:"#475569", flexWrap:"wrap" }}>
+            {deptEmployees.slice(0,8).map(e => (
+              <span key={e.id} style={{ display:"flex", alignItems:"center", gap:"3px" }}>
+                <span style={{ width:"8px", height:"8px", borderRadius:"50%", background:e.color, display:"inline-block" }}/>
+                <span style={{ fontSize:"9px" }}>{e.name.split(" ")[0]}</span>
+              </span>
+            ))}
           </div>
         </div>
         <table style={{ width:"100%", borderCollapse:"collapse" }}>
@@ -944,6 +1027,7 @@ function App({ session }: { session: Session }) {
   // ── Tab: Medewerkers ──────────────────────────────────────────────────────
   function TabMedewerkers() {
     async function addEmployee() {
+      const colorIdx = employees.length % EMPLOYEE_COLORS.length;
       const newEmp: Employee = {
         id: "e" + Date.now(),
         name: "Nieuwe medewerker",
@@ -957,25 +1041,31 @@ function App({ session }: { session: Session }) {
         defaultShiftId: "",
         hourlyWage: 0,
         isAdmin: false,
+        color: EMPLOYEE_COLORS[colorIdx],
+        breaks: [],
       };
-      // Optimistisch lokaal toevoegen
       setEmployees(prev => [...prev, newEmp]);
-      // Direct naar DB
       const { error } = await sb.from("employees").insert({
-        id: newEmp.id,
-        name: newEmp.name,
-        department_id: newEmp.departmentId,
-        hours_per_week: newEmp.hoursPerWeek,
-        main_client_id: null,
-        sub_cat_ids: [],
-        sub_cat_skills: {},
-        standard_off_days: newEmp.standardOffDays,
-        vacation_dates: [],
-        default_shift_id: null,
-        hourly_wage: 0,
-        is_admin: false,
+        id: newEmp.id, name: newEmp.name, department_id: newEmp.departmentId,
+        hours_per_week: newEmp.hoursPerWeek, main_client_id: null,
+        sub_cat_ids: [], sub_cat_skills: {},
+        standard_off_days: newEmp.standardOffDays, vacation_dates: [],
+        default_shift_id: null, hourly_wage: 0, is_admin: false,
+        color: newEmp.color, breaks: [],
       });
       if (error) console.error("Medewerker aanmaken mislukt:", error.message);
+    }
+
+    function addBreak(emp: Employee) {
+      const nb: BreakConfig = { id:"br"+Date.now(), durationMinutes:15, label:"Pauze" };
+      updEmployee({...emp, breaks:[...emp.breaks, nb]});
+    }
+    function updateBreak(emp: Employee, breakId: string, minutes: number) {
+      const updated = emp.breaks.map(b => b.id===breakId ? {...b, durationMinutes:minutes} : b);
+      updEmployee({...emp, breaks:updated});
+    }
+    function removeBreak(emp: Employee, breakId: string) {
+      updEmployee({...emp, breaks:emp.breaks.filter(b => b.id!==breakId)});
     }
 
     return (
@@ -990,35 +1080,54 @@ function App({ session }: { session: Session }) {
 
         {deptEmployees.length===0 && <div style={{ color:"#334155",textAlign:"center",padding:"40px" }}>Geen medewerkers. Klik op + Toevoegen.</div>}
 
-        <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(360px,1fr))",gap:"20px" }}>
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(380px,1fr))",gap:"20px" }}>
           {deptEmployees.map(emp => {
-            const gepland = geplandUrenDezePeriode(emp.id);
+            const gepland = geplandUrenDezeWeek(emp.id, weekStart);
             const pct     = Math.min(100, Math.round(gepland/emp.hoursPerWeek*100));
             const over    = gepland > emp.hoursPerWeek;
+            const totalBreakMins = (emp.breaks||[]).reduce((s,b) => s+b.durationMinutes, 0);
             return (
-              <div key={emp.id} style={{ background:"#1e293b",borderRadius:"12px",padding:"18px",border:"1px solid #334155" }}>
+              <div key={emp.id} style={{ background:"#1e293b",borderRadius:"12px",padding:"18px",border:"1px solid #334155", borderTop:`3px solid ${emp.color}` }}>
                 <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"12px" }}>
-                  <input value={emp.name} onChange={e => updEmployee({...emp,name:e.target.value})}
-                    style={{ background:"none",border:"none",color:"white",fontSize:"16px",fontWeight:"700",flex:1,outline:"none" }}/>
+                  <div style={{ display:"flex",alignItems:"center",gap:"10px",flex:1 }}>
+                    {/* Kleur picker */}
+                    <div style={{ position:"relative" }}>
+                      <div style={{ width:"28px",height:"28px",borderRadius:"50%",background:emp.color,cursor:"pointer",border:"2px solid #334155",flexShrink:0 }}
+                        title="Klik om kleur te wijzigen"
+                        onClick={() => {
+                          const idx = EMPLOYEE_COLORS.indexOf(emp.color);
+                          const nextColor = EMPLOYEE_COLORS[(idx+1)%EMPLOYEE_COLORS.length];
+                          updEmployee({...emp,color:nextColor});
+                        }}/>
+                    </div>
+                    <input value={emp.name} onChange={e => updEmployee({...emp,name:e.target.value})}
+                      style={{ background:"none",border:"none",color:"white",fontSize:"16px",fontWeight:"700",flex:1,outline:"none" }}/>
+                  </div>
                   <div style={{ display:"flex",gap:"6px" }}>
                     <button onClick={() => { setVacModalMonth(viewMonth);setVacModalYear(viewYear);setVacModal(emp.id); }}
                       style={{ background:"#F59E0B",color:"white",border:"none",padding:"5px 10px",borderRadius:"6px",fontSize:"11px",cursor:"pointer" }}>🌴</button>
                     <button onClick={async () => {
-                      if(window.confirm("Medewerker verwijderen?")) {
-                        await deleteEmployee(emp.id);
-                      }
+                      if(window.confirm("Medewerker verwijderen?")) await deleteEmployee(emp.id);
                     }} style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer" }}><Trash2 size={16}/></button>
                   </div>
+                </div>
+
+                {/* Kleur selectie row */}
+                <div style={{ display:"flex",gap:"5px",marginBottom:"12px",flexWrap:"wrap" }}>
+                  {EMPLOYEE_COLORS.map(col => (
+                    <div key={col} onClick={() => updEmployee({...emp,color:col})}
+                      style={{ width:"16px",height:"16px",borderRadius:"50%",background:col,cursor:"pointer",border:emp.color===col?"2px solid white":"2px solid transparent",boxSizing:"border-box" }}/>
+                  ))}
                 </div>
 
                 {/* Urenbalk */}
                 <div style={{ background:"#0f172a",borderRadius:"6px",padding:"8px",marginBottom:"12px" }}>
                   <div style={{ display:"flex",justifyContent:"space-between",fontSize:"10px",marginBottom:"4px" }}>
-                    <span style={{ color:"#64748B" }}>Ingepland deze periode</span>
-                    <span style={{ color:over?"#EF4444":"#10B981",fontWeight:"700" }}>{gepland}u / {emp.hoursPerWeek}u</span>
+                    <span style={{ color:"#64748B" }}>Ingepland deze week</span>
+                    <span style={{ color:over?"#EF4444":"#10B981",fontWeight:"700" }}>{gepland.toFixed(1)}u / {emp.hoursPerWeek}u</span>
                   </div>
                   <div style={{ height:"4px",background:"#334155",borderRadius:"2px",overflow:"hidden" }}>
-                    <div style={{ width:`${pct}%`,height:"100%",background:over?"#EF4444":"#10B981",transition:"width 0.3s" }}/>
+                    <div style={{ width:`${pct}%`,height:"100%",background:over?"#EF4444":emp.color,transition:"width 0.3s" }}/>
                   </div>
                 </div>
 
@@ -1044,6 +1153,42 @@ function App({ session }: { session: Session }) {
                       {content}
                     </div>
                   ))}
+                </div>
+
+                {/* Pauze Management */}
+                <div style={{ background:"#0f172a",borderRadius:"8px",padding:"10px",marginBottom:"12px" }}>
+                  <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px" }}>
+                    <div style={{ display:"flex",alignItems:"center",gap:"6px" }}>
+                      <Coffee size={12} color="#F59E0B"/>
+                      <span style={{ fontSize:"9px",color:"#F59E0B",fontWeight:"700",letterSpacing:"0.06em" }}>PAUZE CONFIGURATIE</span>
+                    </div>
+                    <button onClick={() => addBreak(emp)}
+                      style={{ background:"#F59E0B",border:"none",color:"black",padding:"3px 8px",borderRadius:"4px",fontSize:"9px",cursor:"pointer",fontWeight:"700",display:"flex",alignItems:"center",gap:"3px" }}>
+                      <Plus size={9}/>Pauze
+                    </button>
+                  </div>
+                  {emp.breaks.length === 0 ? (
+                    <div style={{ fontSize:"10px",color:"#334155",textAlign:"center",padding:"6px" }}>
+                      Geen pauzes geconfigureerd. Standaard: 60 min bij ≥9u dienst.
+                    </div>
+                  ) : (
+                    <>
+                      {emp.breaks.map(b => (
+                        <div key={b.id} style={{ display:"flex",gap:"8px",alignItems:"center",marginBottom:"5px",background:"#1e293b",borderRadius:"5px",padding:"6px 8px" }}>
+                          <Coffee size={10} color="#F59E0B"/>
+                          <select value={b.durationMinutes} onChange={e => updateBreak(emp, b.id, Number(e.target.value))}
+                            style={{ background:"#0f172a",color:"white",border:"1px solid #334155",borderRadius:"4px",padding:"3px 6px",fontSize:"11px" }}>
+                            {[10,15,20,30,45,60].map(m => <option key={m} value={m}>{m} min</option>)}
+                          </select>
+                          <span style={{ fontSize:"10px",color:"#64748B",flex:1 }}>pauze</span>
+                          <button onClick={() => removeBreak(emp, b.id)} style={{ background:"none",border:"none",color:"#EF4444",cursor:"pointer",padding:0 }}>✕</button>
+                        </div>
+                      ))}
+                      <div style={{ fontSize:"10px",color:"#64748B",marginTop:"6px",fontFamily:"monospace",textAlign:"right" }}>
+                        Totaal: <span style={{ color:"#F59E0B",fontWeight:"700" }}>{totalBreakMins} min</span> pauze per dienst
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {/* Vrije dagen */}
@@ -1135,7 +1280,6 @@ function App({ session }: { session: Session }) {
   function TabBeheer() {
     return (
       <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:"20px" }}>
-
         {/* Afdelingen */}
         <section style={{ background:"#0f172a",borderRadius:"12px",padding:"20px",border:"1px solid #1e293b" }}>
           <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px" }}>
@@ -1147,6 +1291,7 @@ function App({ session }: { session: Session }) {
               await sb.from("departments").insert({id:nd.id, name:nd.name});
             }} style={{ background:"#3B82F6",border:"none",color:"white",padding:"5px 10px",borderRadius:"6px",cursor:"pointer",fontSize:"12px",display:"flex",alignItems:"center",gap:"4px" }}><Plus size={11}/>Nieuw</button>
           </div>
+          {depts.length === 0 && <div style={{ color:"#334155",fontSize:"12px",textAlign:"center",padding:"20px" }}>Geen afdelingen. Voeg er een toe.</div>}
           {depts.map(d => (
             <div key={d.id} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",background:"#1e293b",borderRadius:"6px",padding:"8px 12px",marginBottom:"5px" }}>
               <input value={d.name} onChange={e => {
@@ -1316,17 +1461,28 @@ function App({ session }: { session: Session }) {
     );
   }
 
-  // ── Tab: Financieel ───────────────────────────────────────────────────────
+  // ── Tab: Financieel (met afdeling/klant/subcat filters) ────────────────────
   function TabFinancieel() {
+    const [filterDeptId, setFilterDeptId] = useState<string>("all");
+    const [filterClientId, setFilterClientId] = useState<string>("all");
     const allDates = displayDates();
 
-    const kostenPerKlant: Record<string,{naam:string;kosten:number;subcats:Record<string,{naam:string;kosten:number;details:{empNaam:string;bruto:number;netto:number;loon:number;kosten:number}[]}>}> = {};
+    // Bouw kosten-structuur
+    type SubcatData = { naam:string; kosten:number; uren:number; details:{empNaam:string;empColor:string;bruto:number;netto:number;loon:number;kosten:number}[] };
+    type ClientData = { naam:string; kosten:number; uren:number; deptId:string; subcats:Record<string,SubcatData> };
+    type DeptData   = { naam:string; kosten:number; uren:number; };
+
+    const kostenPerKlant: Record<string,ClientData> = {};
+    const kostenPerDept:  Record<string,DeptData>   = {};
+
+    // Init depts
+    depts.forEach(d => { kostenPerDept[d.id] = {naam:d.name, kosten:0, uren:0}; });
 
     clients.forEach(client => {
       const csubs = subcats.filter(s => s.clientId===client.id);
-      kostenPerKlant[client.id] = { naam:client.name, kosten:0, subcats:{} };
+      kostenPerKlant[client.id] = { naam:client.name, kosten:0, uren:0, deptId:client.departmentId, subcats:{} };
       (csubs.length ? csubs : [{id:`client-${client.id}`,clientId:client.id,name:"Algemeen",targetSkills:[]}]).forEach(sub => {
-        kostenPerKlant[client.id].subcats[sub.id] = { naam:sub.name, kosten:0, details:[] };
+        kostenPerKlant[client.id].subcats[sub.id] = { naam:sub.name, kosten:0, uren:0, details:[] };
         allDates.forEach(date => {
           const slotId = `${fmtDate(date)}-${sub.id}`;
           const entry  = schedule[slotId];
@@ -1335,29 +1491,69 @@ function App({ session }: { session: Session }) {
             const emp = employees.find(e => e.id===row.employeeId);
             if (!emp) return;
             const bruto  = row.selectedHours?.length || 0;
-            const netto  = nettoUren(row.selectedHours);
+            const netto  = nettoUrenEmp(emp, row.selectedHours);
             const kosten = netto * (emp.hourlyWage || 0);
             kostenPerKlant[client.id].kosten += kosten;
+            kostenPerKlant[client.id].uren   += netto;
             kostenPerKlant[client.id].subcats[sub.id].kosten += kosten;
-            kostenPerKlant[client.id].subcats[sub.id].details.push({ empNaam:emp.name, bruto, netto, loon:emp.hourlyWage||0, kosten });
+            kostenPerKlant[client.id].subcats[sub.id].uren   += netto;
+            kostenPerKlant[client.id].subcats[sub.id].details.push({ empNaam:emp.name, empColor:emp.color, bruto, netto, loon:emp.hourlyWage||0, kosten });
+            if (kostenPerDept[client.departmentId]) {
+              kostenPerDept[client.departmentId].kosten += kosten;
+              kostenPerDept[client.departmentId].uren   += netto;
+            }
           });
         });
       });
     });
 
-    const totalKosten = Object.values(kostenPerKlant).reduce((a,c) => a+c.kosten, 0);
+    // Filter op afdeling/klant
+    const filteredClients = Object.entries(kostenPerKlant).filter(([,c]) => {
+      if (filterDeptId !== "all" && c.deptId !== filterDeptId) return false;
+      if (filterClientId !== "all" && !Object.keys(kostenPerKlant).includes(filterClientId)) return false;
+      if (filterClientId !== "all") return filterClientId === Object.keys(kostenPerKlant).find(k => k === filterClientId);
+      return true;
+    });
+
+    const totalKosten = filteredClients.reduce((a,[,c]) => a+c.kosten, 0);
+    const totalUren   = filteredClients.reduce((a,[,c]) => a+c.uren, 0);
     const weekFactor  = viewType==="week" ? 1 : allDates.length/7;
     const maandSchat  = (totalKosten / weekFactor) * (52/12);
     const jaarSchat   = (totalKosten / weekFactor) * 52;
 
     return (
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))", gap:"20px" }}>
+
+        {/* Filters */}
+        <div style={{ gridColumn:"1/-1", background:"#0f172a", borderRadius:"12px", padding:"16px", border:"1px solid #1e293b", display:"flex", gap:"16px", flexWrap:"wrap", alignItems:"center" }}>
+          <div style={{ display:"flex",alignItems:"center",gap:"8px" }}>
+            <Building2 size={14} color="#64748B"/>
+            <span style={{ fontSize:"11px",color:"#64748B",fontWeight:"700" }}>AFDELING:</span>
+            <select value={filterDeptId} onChange={e => { setFilterDeptId(e.target.value); setFilterClientId("all"); }}
+              style={{ background:"#1e293b",color:"white",border:"1px solid #334155",borderRadius:"6px",padding:"5px 10px",fontSize:"12px" }}>
+              <option value="all">Alle afdelingen</option>
+              {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+          <div style={{ display:"flex",alignItems:"center",gap:"8px" }}>
+            <Users size={14} color="#64748B"/>
+            <span style={{ fontSize:"11px",color:"#64748B",fontWeight:"700" }}>KLANT:</span>
+            <select value={filterClientId} onChange={e => setFilterClientId(e.target.value)}
+              style={{ background:"#1e293b",color:"white",border:"1px solid #334155",borderRadius:"6px",padding:"5px 10px",fontSize:"12px" }}>
+              <option value="all">Alle klanten</option>
+              {clients.filter(c => filterDeptId==="all" || c.departmentId===filterDeptId).map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         {/* KPI kaarten */}
         <div style={{ gridColumn:"1/-1", display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:"14px" }}>
           {[
-            { label:"Deze periode",       value:fmtEuro(totalKosten), icon:<Euro size={18}/>,     color:"#3B82F6" },
-            { label:"Schatting per maand",value:fmtEuro(maandSchat),  icon:<TrendingUp size={18}/>,color:"#10B981" },
-            { label:"Schatting per jaar", value:fmtEuro(jaarSchat),   icon:<PieChart size={18}/>, color:"#8B5CF6" },
+            { label:"Loonkosten periode",  value:fmtEuro(totalKosten),  sub:`${totalUren.toFixed(1)} uur gewerkt`, icon:<Euro size={18}/>,      color:"#3B82F6" },
+            { label:"Schatting per maand", value:fmtEuro(maandSchat),   sub:"Op basis van deze periode",         icon:<TrendingUp size={18}/>, color:"#10B981" },
+            { label:"Schatting per jaar",  value:fmtEuro(jaarSchat),    sub:"Geëxtrapoleerd",                    icon:<PieChart size={18}/>,   color:"#8B5CF6" },
           ].map(kpi => (
             <div key={kpi.label} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:"14px", padding:"20px" }}>
               <div style={{ display:"flex", alignItems:"center", gap:"8px", marginBottom:"12px" }}>
@@ -1365,9 +1561,38 @@ function App({ session }: { session: Session }) {
                 <span style={{ fontSize:"12px", color:"#64748B", fontWeight:"600", letterSpacing:"0.04em" }}>{kpi.label.toUpperCase()}</span>
               </div>
               <div style={{ fontSize:"26px", fontWeight:"800", color:"white", letterSpacing:"-0.5px" }}>{kpi.value}</div>
+              <div style={{ fontSize:"10px", color:"#475569", marginTop:"4px" }}>{kpi.sub}</div>
             </div>
           ))}
         </div>
+
+        {/* Kosten per afdeling */}
+        <section style={{ background:"#0f172a", borderRadius:"14px", padding:"22px", border:"1px solid #1e293b" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:"8px", marginBottom:"18px" }}>
+            <Building2 size={17} color="#3B82F6"/>
+            <h3 style={{ margin:0, color:"white", fontSize:"14px", fontWeight:"700" }}>Kosten per afdeling</h3>
+          </div>
+          {Object.entries(kostenPerDept).map(([deptId, deptData]) => {
+            const deptPct = deptData.kosten > 0 && Object.values(kostenPerDept).reduce((a,d) => a+d.kosten, 0) > 0
+              ? Math.round(deptData.kosten / Object.values(kostenPerDept).reduce((a,d) => a+d.kosten, 0) * 100)
+              : 0;
+            return (
+              <div key={deptId} style={{ background:"#1e293b", borderRadius:"8px", padding:"12px", marginBottom:"8px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"6px" }}>
+                  <span style={{ fontWeight:"700", color:"white", fontSize:"13px" }}>{deptData.naam}</span>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontWeight:"700", color:"white" }}>{fmtEuro(deptData.kosten)}</div>
+                    <div style={{ fontSize:"10px", color:"#64748B" }}>{deptData.uren.toFixed(1)} uur</div>
+                  </div>
+                </div>
+                <div style={{ height:"4px", background:"#334155", borderRadius:"2px", overflow:"hidden" }}>
+                  <div style={{ width:`${deptPct}%`, height:"100%", background:"#3B82F6", transition:"width 0.3s" }}/>
+                </div>
+                <div style={{ fontSize:"9px", color:"#475569", marginTop:"3px", textAlign:"right" }}>{deptPct}% van totaal</div>
+              </div>
+            );
+          })}
+        </section>
 
         {/* Uurlonen per medewerker */}
         <section style={{ background:"#0f172a", borderRadius:"14px", padding:"22px", border:"1px solid #1e293b" }}>
@@ -1376,10 +1601,13 @@ function App({ session }: { session: Session }) {
             <h3 style={{ margin:0, color:"white", fontSize:"14px", fontWeight:"700" }}>Uurlonen beheren</h3>
           </div>
           {employees.map(emp => (
-            <div key={emp.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:"#1e293b", borderRadius:"8px", padding:"10px 14px", marginBottom:"8px" }}>
-              <div>
-                <div style={{ fontSize:"13px", fontWeight:"600", color:"white" }}>{emp.name}</div>
-                <div style={{ fontSize:"10px", color:"#64748B" }}>{depts.find(d=>d.id===emp.departmentId)?.name}</div>
+            <div key={emp.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:"#1e293b", borderRadius:"8px", padding:"10px 14px", marginBottom:"8px", borderLeft:`3px solid ${emp.color}` }}>
+              <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
+                <div style={{ width:"10px", height:"10px", borderRadius:"50%", background:emp.color, flexShrink:0 }}/>
+                <div>
+                  <div style={{ fontSize:"13px", fontWeight:"600", color:"white" }}>{emp.name}</div>
+                  <div style={{ fontSize:"10px", color:"#64748B" }}>{depts.find(d=>d.id===emp.departmentId)?.name}</div>
+                </div>
               </div>
               <div style={{ display:"flex", alignItems:"center", gap:"6px" }}>
                 <span style={{ color:"#64748B", fontSize:"13px" }}>€</span>
@@ -1392,43 +1620,53 @@ function App({ session }: { session: Session }) {
           ))}
         </section>
 
-        {/* Kosten per klant */}
+        {/* Kosten per klant & subcategorie */}
         <section style={{ background:"#0f172a", borderRadius:"14px", padding:"22px", border:"1px solid #1e293b", gridColumn:"span 2" }}>
           <div style={{ display:"flex", alignItems:"center", gap:"8px", marginBottom:"18px" }}>
             <Building2 size={17} color="#38BDF8"/>
             <h3 style={{ margin:0, color:"white", fontSize:"14px", fontWeight:"700" }}>Kosten per klant & subcategorie</h3>
           </div>
-          {Object.values(kostenPerKlant).map(clientData => (
-            <div key={clientData.naam} style={{ marginBottom:"20px", background:"#1e293b", borderRadius:"10px", overflow:"hidden" }}>
+          {filteredClients.map(([clientId, clientData]) => (
+            <div key={clientId} style={{ marginBottom:"20px", background:"#1e293b", borderRadius:"10px", overflow:"hidden" }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", background:"#172033", borderBottom:"1px solid #0f172a" }}>
-                <span style={{ fontWeight:"700", color:"#38BDF8", fontSize:"14px" }}>{clientData.naam}</span>
-                <span style={{ fontWeight:"700", color:"white", fontSize:"15px" }}>{fmtEuro(clientData.kosten)}</span>
+                <div>
+                  <span style={{ fontWeight:"700", color:"#38BDF8", fontSize:"14px" }}>{clientData.naam}</span>
+                  <span style={{ fontSize:"11px",color:"#475569",marginLeft:"10px" }}>{depts.find(d=>d.id===clientData.deptId)?.name}</span>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontWeight:"700", color:"white", fontSize:"15px" }}>{fmtEuro(clientData.kosten)}</div>
+                  <div style={{ fontSize:"10px",color:"#64748B" }}>{clientData.uren.toFixed(1)} uur</div>
+                </div>
               </div>
-              {Object.values(clientData.subcats).map(subData => (
-                <div key={subData.naam}>
+              {Object.entries(clientData.subcats).map(([subId, subData]) => (
+                <div key={subId}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 16px 10px 28px", borderBottom:"1px solid #0f172a" }}>
                     <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
                       <span style={{ color:"#64748B", fontSize:"11px" }}>↳</span>
                       <span style={{ color:"#94A3B8", fontSize:"13px" }}>{subData.naam}</span>
                     </div>
                     <div style={{ display:"flex", alignItems:"center", gap:"10px" }}>
-                      <span style={{ color:"#94A3B8", fontSize:"13px", fontWeight:"600" }}>{fmtEuro(subData.kosten)}</span>
-                      <button onClick={() => setShowCalcFor(prev => prev===subData.naam?null:subData.naam)}
+                      <div style={{ textAlign:"right" }}>
+                        <div style={{ color:"#94A3B8", fontSize:"13px", fontWeight:"600" }}>{fmtEuro(subData.kosten)}</div>
+                        <div style={{ fontSize:"9px",color:"#475569" }}>{subData.uren.toFixed(1)} uur</div>
+                      </div>
+                      <button onClick={() => setShowCalcFor(prev => prev===subId?null:subId)}
                         style={{ background:"#0f172a", border:"1px solid #334155", color:"#64748B", borderRadius:"5px", padding:"3px 8px", fontSize:"10px", cursor:"pointer", display:"flex", alignItems:"center", gap:"4px" }}>
-                        {showCalcFor===subData.naam ? <EyeOff size={11}/> : <Eye size={11}/>}
-                        Berekening
+                        {showCalcFor===subId ? <EyeOff size={11}/> : <Eye size={11}/>}
+                        Detail
                       </button>
                     </div>
                   </div>
-                  {showCalcFor===subData.naam && subData.details.length>0 && (
+                  {showCalcFor===subId && subData.details.length>0 && (
                     <div style={{ padding:"12px 28px", background:"rgba(0,0,0,0.2)", borderBottom:"1px solid #0f172a" }}>
                       {subData.details.map((d,i) => (
-                        <div key={i} style={{ fontSize:"11px", color:"#64748B", marginBottom:"4px", fontFamily:"monospace" }}>
+                        <div key={i} style={{ fontSize:"11px", color:"#64748B", marginBottom:"5px", fontFamily:"monospace", display:"flex", alignItems:"center", gap:"8px" }}>
+                          <span style={{ width:"8px",height:"8px",borderRadius:"50%",background:d.empColor,display:"inline-block",flexShrink:0 }}/>
                           <span style={{ color:"#94A3B8" }}>{d.empNaam}</span>:&nbsp;
                           {d.bruto>0 && d.bruto!==d.netto ? (
-                            <><span style={{ color:"#F59E0B" }}>{d.bruto} blokjes</span> − 1u pauze = <span style={{ color:"#10B981" }}>{d.netto}u</span></>
+                            <><span style={{ color:"#F59E0B" }}>{d.bruto} blokjes</span> → <span style={{ color:"#10B981" }}>{d.netto.toFixed(2)}u netto</span></>
                           ) : (
-                            <span style={{ color:"#10B981" }}>{d.netto}u</span>
+                            <span style={{ color:"#10B981" }}>{d.netto.toFixed(2)}u</span>
                           )}
                           &nbsp;× {fmtEuro(d.loon)} = <span style={{ color:"white", fontWeight:"bold" }}>{fmtEuro(d.kosten)}</span>
                         </div>
@@ -1439,6 +1677,9 @@ function App({ session }: { session: Session }) {
               ))}
             </div>
           ))}
+          {filteredClients.length === 0 && (
+            <div style={{ color:"#334155",textAlign:"center",padding:"40px",fontSize:"13px" }}>Geen data voor deze filter.</div>
+          )}
         </section>
       </div>
     );
@@ -1446,55 +1687,41 @@ function App({ session }: { session: Session }) {
 
   // ── Tab: Admin (gebruikersbeheer) ─────────────────────────────────────────
   function AdminUserPanel() {
-    const [naam,     setNaam]     = useState("");
-    const [email,    setEmail]    = useState("");
-    const [password, setPassword] = useState("");
+    const [naam,       setNaam]       = useState("");
+    const [email,      setEmail]      = useState("");
+    const [password,   setPassword]   = useState("");
     const [isAdminNew, setIsAdminNew] = useState(false);
     const [loadingNew, setLoadingNew] = useState(false);
-    const [status,   setStatus]   = useState<{type:"ok"|"err";msg:string}|null>(null);
-    const [allUsers, setAllUsers] = useState<any[]>([]);
+    const [status,     setStatus]     = useState<{type:"ok"|"err";msg:string}|null>(null);
+    const [allUsers,   setAllUsers]   = useState<any[]>([]);
 
-    // Laad bestaande medewerkers
     useEffect(() => {
-      sb.from("employees").select("id,name,email,is_admin,department_id").then(({ data }) => {
+      sb.from("employees").select("id,name,email,is_admin,department_id,color").then(({ data }) => {
         if (data) setAllUsers(data);
       });
     }, []);
 
     async function addUser() {
       if (!naam.trim() || !email.trim() || !password.trim()) {
-        setStatus({type:"err", msg:"Vul naam, e-mail en wachtwoord in."});
-        return;
+        setStatus({type:"err", msg:"Vul naam, e-mail en wachtwoord in."}); return;
       }
       setLoadingNew(true); setStatus(null);
       try {
-        // 1) Maak auth-gebruiker aan via Supabase Admin API (via service role) — 
-        //    Vanuit de browser kun je alleen signUp gebruiken:
         const { data: signUpData, error: signUpErr } = await sb.auth.signUp({ email, password });
         if (signUpErr) throw signUpErr;
-
         const userId = signUpData.user?.id;
         if (!userId) throw new Error("Geen gebruikers-ID ontvangen van Supabase Auth.");
-
-        // 2) Medewerker-record aanmaken in employees tabel
+        const colorIdx = employees.length % EMPLOYEE_COLORS.length;
         const { data, error } = await sb.from("employees").insert({
-          id: userId,
-          name: naam,
-          email: email,
-          is_admin: isAdminNew,
-          department_id: activeDeptId,
-          hours_per_week: 40,
-          main_client_id: null,
-          sub_cat_ids: [],
-          sub_cat_skills: {},
-          standard_off_days: ["Zaterdag","Zondag"],
-          vacation_dates: [],
-          default_shift_id: null,
-          hourly_wage: 0,
+          id: userId, name: naam, email: email,
+          is_admin: isAdminNew, department_id: activeDeptId,
+          hours_per_week: 40, main_client_id: null,
+          sub_cat_ids: [], sub_cat_skills: {},
+          standard_off_days: ["Zaterdag","Zondag"], vacation_dates: [],
+          default_shift_id: null, hourly_wage: 0,
+          color: EMPLOYEE_COLORS[colorIdx], breaks: [],
         }).select();
-
         if (error) throw error;
-
         if (data) {
           setAllUsers(prev => [...prev, data[0]]);
           setEmployees(prev => [...prev, {
@@ -1502,6 +1729,7 @@ function App({ session }: { session: Session }) {
             hoursPerWeek:40, mainClientId:"", subCatIds:[], subCatSkills:{},
             standardOffDays:["Zaterdag","Zondag"], vacationDates:[],
             defaultShiftId:"", hourlyWage:0, isAdmin:isAdminNew,
+            color:EMPLOYEE_COLORS[colorIdx], breaks:[],
           }]);
         }
         setStatus({type:"ok", msg:`✅ ${naam} aangemaakt. Verificatiemail verstuurd naar ${email}.`});
@@ -1517,7 +1745,6 @@ function App({ session }: { session: Session }) {
       setAllUsers(prev => prev.map(u => u.id===userId ? {...u,is_admin:!current} : u));
       setEmployees(prev => prev.map(e => e.id===userId ? {...e,isAdmin:!current} : e));
     }
-
     async function removeUser(userId: string) {
       if (!window.confirm("Gebruiker permanent verwijderen?")) return;
       await sb.from("employees").delete().eq("id", userId);
@@ -1527,7 +1754,6 @@ function App({ session }: { session: Session }) {
 
     return (
       <div style={{ display:"grid", gap:"20px", maxWidth:"700px" }}>
-        {/* Nieuw aanmaken */}
         <div style={{ background:"#0f172a", borderRadius:"16px", padding:"28px", border:"1px solid #1e293b" }}>
           <div style={{ display:"flex", alignItems:"center", gap:"10px", marginBottom:"24px" }}>
             <Shield size={20} color="#8B5CF6"/>
@@ -1570,14 +1796,16 @@ function App({ session }: { session: Session }) {
           </button>
         </div>
 
-        {/* Bestaande gebruikers */}
         <div style={{ background:"#0f172a", borderRadius:"16px", padding:"28px", border:"1px solid #1e293b" }}>
           <h3 style={{ margin:"0 0 18px 0", color:"white", fontSize:"15px", fontWeight:"700" }}>Alle gebruikers ({allUsers.length})</h3>
           {allUsers.map(u => (
-            <div key={u.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:"#1e293b", borderRadius:"8px", padding:"12px 14px", marginBottom:"8px" }}>
-              <div>
-                <div style={{ fontSize:"13px", fontWeight:"600", color:"white" }}>{u.name}</div>
-                <div style={{ fontSize:"10px", color:"#64748B", marginTop:"2px" }}>{u.email || "Geen e-mail"}</div>
+            <div key={u.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:"#1e293b", borderRadius:"8px", padding:"12px 14px", marginBottom:"8px", borderLeft:`3px solid ${u.color||"#3B82F6"}` }}>
+              <div style={{ display:"flex", alignItems:"center", gap:"10px" }}>
+                <div style={{ width:"10px",height:"10px",borderRadius:"50%",background:u.color||"#3B82F6" }}/>
+                <div>
+                  <div style={{ fontSize:"13px", fontWeight:"600", color:"white" }}>{u.name}</div>
+                  <div style={{ fontSize:"10px", color:"#64748B", marginTop:"2px" }}>{u.email || "Geen e-mail"}</div>
+                </div>
               </div>
               <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
                 <button onClick={() => toggleAdmin(u.id, u.is_admin)} title={u.is_admin?"Verwijder admin-rechten":"Maak admin"}
@@ -1606,6 +1834,14 @@ function App({ session }: { session: Session }) {
     ] : []),
   ];
 
+  if (loading) return (
+    <div style={{ minHeight:"100vh",background:"#020617",display:"flex",alignItems:"center",justifyContent:"center",color:"#475569",fontFamily:"'Segoe UI',system-ui,sans-serif",fontSize:"14px",flexDirection:"column",gap:"12px" }}>
+      <div style={{ width:"40px",height:"40px",border:"3px solid #1e293b",borderTop:"3px solid #3B82F6",borderRadius:"50%",animation:"spin 1s linear infinite" }}/>
+      <span>Data laden uit database...</span>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight:"100vh",background:"#020617",color:"#F8FAFC",fontFamily:"'Segoe UI',system-ui,sans-serif",padding:"16px" }}>
@@ -1616,17 +1852,20 @@ function App({ session }: { session: Session }) {
 
       <nav className="screen-only" style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"18px",borderBottom:"1px solid #0f172a",paddingBottom:"14px",flexWrap:"wrap",gap:"10px" }}>
         <div style={{ display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap" }}>
-          <select value={activeDeptId} onChange={e => setActiveDeptId(e.target.value)}
-            style={{ background:"#3B82F6",color:"white",padding:"8px 12px",borderRadius:"8px",border:"none",fontWeight:"700",cursor:"pointer" }}>
-            {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
+          {depts.length === 0 ? (
+            <div style={{ color:"#475569",fontSize:"12px",padding:"8px" }}>Geen afdelingen — voeg toe via Klanten & Shifts</div>
+          ) : (
+            <select value={activeDeptId} onChange={e => setActiveDeptId(e.target.value)}
+              style={{ background:"#3B82F6",color:"white",padding:"8px 12px",borderRadius:"8px",border:"none",fontWeight:"700",cursor:"pointer" }}>
+              {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          )}
           {tabs.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id as any)}
               style={{ background:activeTab===tab.id?"#0f172a":"transparent",color:activeTab===tab.id?"white":"#64748B",border:activeTab===tab.id?"1px solid #1e293b":"1px solid transparent",padding:"7px 14px",borderRadius:"8px",cursor:"pointer",fontWeight:activeTab===tab.id?"700":"400",fontSize:"13px",display:"flex",alignItems:"center",gap:"6px" }}>
               {tab.icon}{tab.label}
             </button>
           ))}
-          {loading && <span style={{ fontSize:"11px",color:"#F59E0B",marginLeft:"4px" }}>⏳ Laden...</span>}
         </div>
 
         <div style={{ display:"flex",gap:"8px",alignItems:"center" }}>
@@ -1675,6 +1914,7 @@ function App({ session }: { session: Session }) {
         ::-webkit-scrollbar-track { background:#0f172a; }
         ::-webkit-scrollbar-thumb { background:#1e293b; border-radius:3px; }
         ::-webkit-scrollbar-thumb:hover { background:#334155; }
+        @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
     </div>
   );
