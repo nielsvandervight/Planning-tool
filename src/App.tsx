@@ -426,16 +426,38 @@ const PDFPreviewModal = React.memo(function PDFPreviewModal({
     }
   },[html]);
 
-  async function downloadPDF() {
+  import jsPDF from "jspdf";
+  import html2canvas from "html2canvas";
+    async function downloadPDF() {
     setGenerating(true);
     try {
-      // Dynamisch laden van jspdf en html2canvas
-      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
-        // @ts-ignore
-        import("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js").catch(()=>import("jspdf")),
-        // @ts-ignore
-        import("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js").catch(()=>import("html2canvas")),
-      ]);
+      const element = iframeRef.current?.contentDocument?.body;
+      if (!element) return;
+
+      const canvas = await html2canvas(element, { 
+        scale: 2, 
+        useCORS: true 
+      });
+      
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({
+        orientation: orientation,
+        unit: "mm",
+        format: "a4"
+      });
+
+      const pw = pdf.internal.pageSize.getWidth();
+      const imgWidth = pw;
+      const imgHeight = (canvas.height * pw) / canvas.width;
+
+      pdf.addImage(imgData, "PNG", 0, 0, imgWidth, imgHeight);
+      pdf.save(`planning.pdf`);
+      
+    } catch (e) {
+      console.error("PDF fout:", e);
+    }
+    setGenerating(false);
+  }
       // Render HTML in verborgen iframe
       const iframe=document.createElement("iframe");
       iframe.style.cssText="position:fixed;top:-9999px;left:-9999px;width:1200px;height:800px;border:none;";
