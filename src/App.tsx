@@ -1,15 +1,3 @@
-/**
- * PERSONEELSPLANNING APP — Volledig Herschreven
- * ─────────────────────────────────────────────
- * Features:
- *  • Alle modals via uniforme Modal-component (geen focus-verlies)
- *  • One-page adaptieve PDF (jspdf + html2canvas) met preview modal
- *  • Dynamische schaling op basis van medewerkercount
- *  • Pauze presets (30m / 60m / 15-30-15) + exacte tijden
- *  • Break-cover logica + visualisatie (scherm + PDF)
- *  • Alle data via Supabase, geen hardcoded fallbacks
- */
-
 import React, {
   useState, useEffect, useCallback, useRef, useMemo
 } from "react";
