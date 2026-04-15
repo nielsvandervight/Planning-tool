@@ -1,3 +1,18 @@
+/**
+ * PERSONEELSPLANNING APP — Volledig Herschreven
+ * ─────────────────────────────────────────────
+ * Features:
+ *  • Alle modals via uniforme Modal-component (geen focus-verlies)
+ *  • One-page adaptieve PDF (jspdf + html2canvas) met preview modal
+ *  • Dynamische schaling op basis van medewerkercount
+ *  • Pauze presets (30m / 60m / 15-30-15) + exacte tijden
+ *  • Break-cover logica + visualisatie (scherm + PDF)
+ *  • Alle data via Supabase, geen hardcoded fallbacks
+ *
+ * INSTALLATIE (eenmalig):
+ *   npm install jspdf html2canvas
+ */
+
 import React, {
   useState, useEffect, useCallback, useRef, useMemo
 } from "react";
@@ -9,6 +24,8 @@ import {
   TrendingUp, Building2, PieChart, Clock, Shield, Coffee,
   X, Check, Edit2, Download, FileText
 } from "lucide-react";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
 const SUPABASE_URL      = import.meta.env.VITE_SUPABASE_URL;
@@ -426,60 +443,43 @@ const PDFPreviewModal = React.memo(function PDFPreviewModal({
     }
   },[html]);
 
-  import jsPDF from "jspdf";
-  import html2canvas from "html2canvas";
-    async function downloadPDF() {
+  async function downloadPDF() {
     setGenerating(true);
     try {
-      const element = iframeRef.current?.contentDocument?.body;
-      if (!element) return;
-
-      const canvas = await html2canvas(element, { 
-        scale: 2, 
-        useCORS: true 
+      // Render HTML in verborgen div (html2canvas werkt beter dan iframe cross-origin)
+      const container = document.createElement("div");
+      container.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:1122px;background:#fff;padding:0;margin:0;";
+      container.innerHTML = html;
+      document.body.appendChild(container);
+      // Wacht tot fonts/images geladen zijn
+      await new Promise(r => setTimeout(r, 400));
+      const canvas = await html2canvas(container, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+        width: container.scrollWidth,
+        height: container.scrollHeight,
       });
-      
-      const imgData = canvas.toDataURL("image/png");
-      const pdf = new jsPDF({
-        orientation: orientation,
-        unit: "mm",
-        format: "a4"
-      });
-
-      const pw = pdf.internal.pageSize.getWidth();
-      const imgWidth = pw;
-      const imgHeight = (canvas.height * pw) / canvas.width;
-
-      pdf.addImage(imgData, "PNG", 0, 0, imgWidth, imgHeight);
-      pdf.save(`planning.pdf`);
-      
-    } catch (e) {
-      console.error("PDF fout:", e);
-    }
-    setGenerating(false);
-  }
-      // Render HTML in verborgen iframe
-      const iframe=document.createElement("iframe");
-      iframe.style.cssText="position:fixed;top:-9999px;left:-9999px;width:1200px;height:800px;border:none;";
-      document.body.appendChild(iframe);
-      const doc=iframe.contentDocument!;
-      doc.open(); doc.write(html); doc.close();
-      await new Promise(r=>setTimeout(r,500));
-      const canvas=await html2canvas(doc.body,{scale:2,useCORS:true,backgroundColor:"#fff"});
-      document.body.removeChild(iframe);
-      const pdf=new jsPDF({orientation,unit:"mm",format:"a4"});
-      const pw=pdf.internal.pageSize.getWidth();
-      const ph=pdf.internal.pageSize.getHeight();
-      const ratio=Math.min(pw/canvas.width,ph/canvas.height)*10; // mm per px *10 for scale
-      const w=canvas.width*ratio/10;
-      const h=canvas.height*ratio/10;
-      pdf.addImage(canvas.toDataURL("image/png"),"PNG",(pw-w)/2,(ph-h)/2,w,h);
-      const weekStr=data.weekLabel.replace(/\s/g,"_");
+      document.body.removeChild(container);
+      const pdf = new jsPDF({ orientation, unit: "mm", format: "a4" });
+      const pw  = pdf.internal.pageSize.getWidth();
+      const ph  = pdf.internal.pageSize.getHeight();
+      // Schaal canvas naar A4 met behoud van aspect ratio
+      const imgW = canvas.width;
+      const imgH = canvas.height;
+      const scale = Math.min(pw / imgW, ph / imgH);
+      const finalW = imgW * scale;
+      const finalH = imgH * scale;
+      const offsetX = (pw - finalW) / 2;
+      const offsetY = (ph - finalH) / 2;
+      pdf.addImage(canvas.toDataURL("image/png"), "PNG", offsetX, offsetY, finalW, finalH);
+      const weekStr = data.weekLabel.replace(/[\s·/–]/g, "_").replace(/_+/g, "_");
       pdf.save(`planning_${data.deptName}_${weekStr}.pdf`);
-    } catch(e) {
+    } catch (e) {
       console.error("PDF generatie mislukt:", e);
-      // Fallback: print via browser
-      const w=window.open("","_blank");
+      // Fallback: browser print
+      const w = window.open("", "_blank");
       if (w) { w.document.write(html); w.document.close(); w.print(); }
     }
     setGenerating(false);
