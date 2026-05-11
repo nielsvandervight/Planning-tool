@@ -454,88 +454,123 @@ export const PDFPreviewModal = React.memo(function PDFPreviewModal({
   data, onClose
 }: { data:PDFData; onClose:()=>void }) {
   const [paperSize, setPaperSize] = useState<"A4"|"A3">("A4");
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [downloaded, setDownloaded] = useState(false);
+
   const html = useMemo(() => generatePrintHTML(data, paperSize), [data, paperSize]);
 
-  useEffect(() => {
-    if (iframeRef.current) {
-      const doc = iframeRef.current.contentDocument;
-      if (doc) { doc.open(); doc.write(html); doc.close(); }
-    }
-  }, [html]);
+  // Bestandsnaam samenstellen
+  function getFilename() {
+    const wk = (data.weekLabel || "planning")
+      .replace(/[/\\?%*:|"<>]/g, "-")
+      .replace(/\s+/g, "_")
+      .replace(/_+/g, "_")
+      .slice(0, 60);
+    return `planning_${(data.deptName || "export").replace(/\s+/g,"_")}_${wk}.html`;
+  }
 
-  // DOWNLOAD: sla HTML-bestand op — gebruiker opent het en kan dan Ctrl+P → PDF
+  // Directe download via Blob + <a> — geen popup, geen iframe nodig
   function downloadHTML() {
-    const blob = new Blob([html],{type:"text/html;charset=utf-8"});
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href = url;
-    const wk = data.weekLabel.replace(/[\s·/–]/g,"_").replace(/_+/g,"_");
-    a.download = `planning_${data.deptName}_${wk}.html`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = getFilename();
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      // Kleine vertraging voor Firefox
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 200);
+      setDownloaded(true);
+    } catch(e) {
+      console.error("Download fout:", e);
+      alert("Download mislukt. Probeer 'Kopieer HTML' en plak in een tekstbestand met extensie .html");
+    }
   }
 
-  // DIRECT AFDRUKKEN via popup (voor wie direct wil printen/PDF opslaan via browser)
-  function openAndPrint() {
-    const w = window.open("","_blank","width=1200,height=800");
-    if (!w) { alert("Pop-up geblokkeerd. Gebruik de HTML download knop."); return; }
-    w.document.write(html);
-    w.document.close();
-    // Wacht op volledige render dan print
-    w.onload = () => { setTimeout(() => { w.focus(); w.print(); }, 300); };
-    setTimeout(() => { try { w.focus(); w.print(); } catch(e){} }, 800);
+  // Fallback: kopieer HTML naar klembord
+  function copyHTML() {
+    navigator.clipboard.writeText(html).then(() => {
+      alert("HTML gekopieerd! Plak in een tekstbestand en sla op als .html");
+    }).catch(() => {
+      alert("Kopiëren mislukt. Gebruik de download knop.");
+    });
   }
+
+  const weekInfo = data.dates?.filter(d => !isWeekend(d)) || [];
+  const empCount = new Set(
+    Object.values(data.schedule).flatMap(e => e.rows?.map(r => r.employeeId).filter(Boolean) || [])
+  ).size;
 
   return (
-    <Modal title="📄 Planning Exporteren" onClose={onClose} width="900px" zIndex={3000}>
-      <div style={{display:"flex",gap:10,marginBottom:16,alignItems:"center",flexWrap:"wrap"}}>
-        <span style={{fontSize:11,color:"#64748B",fontWeight:700}}>PAPIERFORMAAT:</span>
-        {(["A4","A3"] as const).map(o=>(
-          <button key={o} onClick={()=>setPaperSize(o)}
-            style={{padding:"6px 16px",borderRadius:8,border:"2px solid",
-              borderColor:paperSize===o?"#3B82F6":"#334155",
-              background:paperSize===o?"#1d4ed8":"#0f172a",
-              color:"white",cursor:"pointer",fontWeight:700,fontSize:12}}>
-            {o} Liggend
-          </button>
-        ))}
+    <Modal title="📄 Planning Exporteren" onClose={onClose} width="520px" zIndex={3000}>
+      {/* Papierformaat */}
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:11,color:"#64748B",fontWeight:700,marginBottom:8}}>PAPIERFORMAAT</div>
+        <div style={{display:"flex",gap:8}}>
+          {(["A4","A3"] as const).map(o=>(
+            <button key={o} onClick={()=>{ setPaperSize(o); setDownloaded(false); }}
+              style={{flex:1,padding:"10px 0",borderRadius:8,border:"2px solid",
+                borderColor:paperSize===o?"#3B82F6":"#334155",
+                background:paperSize===o?"#1d4ed8":"#0f172a",
+                color:"white",cursor:"pointer",fontWeight:700,fontSize:13}}>
+              {o} Liggend
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Uurberekening legenda */}
+      {/* Samenvatting */}
+      <div style={{background:"#1e293b",borderRadius:10,padding:16,marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:700,color:"white",marginBottom:8}}>{data.deptName} — {data.weekLabel}</div>
+        <div style={{display:"flex",gap:16,fontSize:11,color:"#64748B"}}>
+          <span>📅 {weekInfo.length} werkdagen</span>
+          <span>👤 {empCount} medewerkers ingepland</span>
+          <span>📄 {paperSize} liggend</span>
+        </div>
+      </div>
+
+      {/* Uurberekening info */}
       <div style={{background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.2)",
-        borderRadius:8,padding:"8px 14px",marginBottom:12,fontSize:11,color:"#6EE7B7"}}>
-        ℹ️ <strong>Uurberekening:</strong> 8–17u = 9 bruto uur − 1u pauze = <strong>8u netto</strong> · 6–9u bruto = 30 min pauze · &lt;6u = geen pauze
+        borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:11,color:"#6EE7B7",lineHeight:1.6}}>
+        <strong>ℹ️ Uurberekening:</strong> 8–17u = 9 bruto − 1u pauze = <strong>8u netto</strong><br/>
+        ≥9u bruto → 60 min pauze · ≥6u → 30 min · &lt;6u → geen pauze
       </div>
 
-      <div style={{border:"1px solid #334155",borderRadius:8,overflow:"hidden",
-        marginBottom:16,background:"#f8fafc",height:440}}>
-        <iframe ref={iframeRef} title="Print Preview" style={{width:"100%",height:"100%",border:"none"}}/>
+      {/* Instructie */}
+      <div style={{background:"rgba(59,130,246,.06)",border:"1px solid rgba(59,130,246,.2)",
+        borderRadius:8,padding:"10px 14px",marginBottom:20,fontSize:11,color:"#93C5FD",lineHeight:1.8}}>
+        <strong style={{color:"white"}}>📥 Hoe PDF maken:</strong><br/>
+        1. Klik op <strong>"Download HTML"</strong> hieronder<br/>
+        2. Open het gedownloade bestand in Chrome of Edge<br/>
+        3. Druk <strong>Ctrl+P</strong> (of Cmd+P op Mac)<br/>
+        4. Kies <strong>"Opslaan als PDF"</strong> en schakel <em>Achtergrondafbeeldingen</em> in
       </div>
 
-      <div style={{background:"#1e293b",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:11,color:"#94a3b8"}}>
-        💡 <strong style={{color:"white"}}>Workflow PDF:</strong> Klik op <em>"HTML Downloaden"</em> → open het bestand → Ctrl+P → kies "Opslaan als PDF" en schakel "Achtergrondafbeeldingen" in.
-        Of klik <em>"Openen &amp; Printen"</em> voor een directe printdialoog.
-      </div>
+      {/* Download knop — groot en centraal */}
+      <button onClick={downloadHTML}
+        style={{width:"100%",padding:"16px 0",background:downloaded?"#10B981":"#3B82F6",
+          border:"none",color:"white",borderRadius:10,cursor:"pointer",fontWeight:800,
+          fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",gap:10,
+          marginBottom:10,transition:"background .2s",letterSpacing:"-0.3px"}}>
+        <Download size={20}/>
+        {downloaded ? "✓ Gedownload! Klik opnieuw voor nieuw bestand" : `Download HTML — ${getFilename().slice(0,40)}...`}
+      </button>
 
       <div style={{display:"flex",gap:8}}>
-        <button onClick={onClose}
-          style={{flex:1,padding:10,background:"#1e293b",border:"none",color:"white",borderRadius:8,cursor:"pointer"}}>
-          Sluiten
-        </button>
-        <button onClick={openAndPrint}
-          style={{flex:1,padding:10,background:"#8B5CF6",border:"none",color:"white",
-            borderRadius:8,cursor:"pointer",fontWeight:700,
+        <button onClick={copyHTML}
+          style={{flex:1,padding:"9px 0",background:"#0f172a",border:"1px solid #334155",
+            color:"#64748B",borderRadius:8,cursor:"pointer",fontSize:12,
             display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-          <Printer size={14}/> Openen &amp; Printen
+          📋 Kopieer HTML (fallback)
         </button>
-        <button onClick={downloadHTML}
-          style={{flex:2,padding:10,background:"#3B82F6",border:"none",color:"white",
-            borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:14,
-            display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-          <Download size={16}/> HTML Downloaden
+        <button onClick={onClose}
+          style={{flex:1,padding:"9px 0",background:"#1e293b",border:"none",
+            color:"white",borderRadius:8,cursor:"pointer",fontSize:12}}>
+          Sluiten
         </button>
       </div>
     </Modal>
