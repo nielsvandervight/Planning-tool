@@ -58,7 +58,7 @@ export const BREAK_PRESETS = [
   { label:"Geen pauze", breaks:[] },
   { label:"15 min",  breaks:[{ id:"p0", startHour:10, startMin:0, endHour:10, endMin:15, label:"Pauze" }] },
   { label:"30 min",  breaks:[{ id:"p1", startHour:12, startMin:0, endHour:12, endMin:30, label:"Lunch" }] },
-  { label:"60 min",  breaks:[{ id:"p2", startHour:12, startMin:0, endHour:13, endMin:0,  label:"Lunch" }] },
+  { label:"60 min (standaard)",  breaks:[{ id:"p2", startHour:12, startMin:0, endHour:13, endMin:0,  label:"Lunch" }] },
   { label:"15+30+15 min", breaks:[
     { id:"p3a", startHour:10, startMin:0, endHour:10, endMin:15, label:"Pauze" },
     { id:"p3b", startHour:12, startMin:0, endHour:12, endMin:30, label:"Lunch" },
@@ -103,37 +103,47 @@ export function contrastColor(hex: string): string {
 }
 
 /**
- * Berekent pauze-minuten die vallen binnen de geselecteerde uren.
- * Als er geen breaks zijn en er >= 9 uur gewerkt wordt, wordt standaard 60 min aangehouden.
+ * AANGEPAST: Berekent pauze-minuten die vallen binnen de geselecteerde uren.
+ * Standaard: bij >= 9 bruto uur wordt altijd 60 min pauze gehanteerd (wettelijk).
+ * Bij eigen breaks: bereken overlap.
  */
 export function calcBreakMins(breaks: BreakSlot[], selectedHours: number[]): number {
   if (!selectedHours?.length) return 0;
-  if (!breaks?.length) return selectedHours.length >= 9 ? 60 : 0;
+  const brutoHours = selectedHours.length;
+  // Geen aangepaste breaks → standaard wettelijke pauze
+  if (!breaks?.length) {
+    if (brutoHours >= 9) return 60;   // >= 9 uur bruto: 1 uur pauze
+    if (brutoHours >= 6) return 30;   // >= 6 uur bruto: 30 min pauze (wettelijk NL)
+    return 0;
+  }
+  // Eigen breaks: bereken overlap met gewerkte uren
   let total = 0;
   const ss = Math.min(...selectedHours);
-  const se = Math.max(...selectedHours) + 1; // einde laatste uur
+  const se = Math.max(...selectedHours) + 1;
   breaks.forEach(b => {
     const bs = b.startHour + b.startMin / 60;
     const be = b.endHour   + b.endMin   / 60;
-    // Overlap tussen [ss, se) en [bs, be)
     total += Math.max(0, Math.min(se, be) - Math.max(ss, bs)) * 60;
   });
   return Math.round(total);
 }
 
 /**
- * Netto gewerkte uren voor een medewerker: bruto uren minus zijn pauze.
+ * Netto gewerkte uren voor een medewerker: bruto uren minus pauze.
  */
 export function nettoUrenEmp(emp: Employee, hours: number[]): number {
   return Math.max(0, (hours?.length || 0) - calcBreakMins(emp.breaks, hours) / 60);
 }
 
 /**
- * Generieke netto uren zonder emp-specifieke breaks (fallback: -1u bij >= 9u).
+ * Netto uren zonder emp-specifieke breaks.
+ * >= 9u bruto → 1u pauze; >= 6u bruto → 30 min pauze
  */
 export function nettoUren(hours: number[]): number {
   const b = hours?.length || 0;
-  return b >= 9 ? b - 1 : b;
+  if (b >= 9) return b - 1;
+  if (b >= 6) return b - 0.5;
+  return b;
 }
 
 export function isBreakHour(emp: Employee, h: number): boolean {
@@ -166,10 +176,9 @@ export const inputSt: React.CSSProperties = {
 export const selectSt: React.CSSProperties = { ...inputSt, cursor:"pointer" };
 
 // ══════════════════════════════════════════════════════════════════════════════
-// GEDEELDE UI COMPONENTEN (buiten App)
+// GEDEELDE UI COMPONENTEN
 // ══════════════════════════════════════════════════════════════════════════════
 
-// ─── Modal ────────────────────────────────────────────────────────────────────
 export const Modal = React.memo(function Modal({
   title, onClose, children, width="520px", zIndex=2000
 }: { title:string; onClose:()=>void; children:React.ReactNode; width?:string; zIndex?:number }) {
@@ -208,7 +217,6 @@ export function ModalField({label,children}:{label:string;children:React.ReactNo
   );
 }
 
-// ─── ColorPicker ──────────────────────────────────────────────────────────────
 export const ColorPicker = React.memo(function ColorPicker(
   { value, onChange }: { value:string; onChange:(c:string)=>void }
 ) {
@@ -243,7 +251,7 @@ export const ColorPicker = React.memo(function ColorPicker(
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// PDF GENERATIE
+// PDF GENERATIE — DOWNLOAD VERSIE (geen print popup)
 // ══════════════════════════════════════════════════════════════════════════════
 interface PDFData {
   deptName: string;
@@ -350,7 +358,6 @@ function generatePrintHTML(data: PDFData, paperSize: "A4"|"A3"): string {
         padding:3px;overflow:hidden;box-sizing:border-box;">${cellContent}</div>`;
     }).join("");
 
-    // Netto uren berekening voor PDF
     const netto = workDays.reduce((sum, date) => {
       const ds = fmtDate(date);
       let dayHours: number[] = [];
@@ -381,6 +388,7 @@ function generatePrintHTML(data: PDFData, paperSize: "A4"|"A3"): string {
   const totalW = 180 + workDays.length * colW;
   const totalH = 60  + scheduledEmps.length * rowH;
 
+  // GEEN print() call — puur voor download als HTML-bestand
   return `<!DOCTYPE html><html><head>
 <meta charset="utf-8"/>
 <title>Planning ${deptName} — ${weekLabel}</title>
@@ -398,14 +406,24 @@ function generatePrintHTML(data: PDFData, paperSize: "A4"|"A3"): string {
   .emp-label-header{position:absolute;left:0;top:0;width:180px;height:60px;background:#0f172a;
     border-right:2px solid #334155;display:flex;align-items:center;padding:0 12px;
     font-size:${fontSize}px;font-weight:700;color:#94a3b8;letter-spacing:0.06em;}
-  @media screen{body{padding:20px;background:#f1f5f9;}.print-wrapper{background:white;padding:20px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:1400px;margin:0 auto;}.print-btn{display:inline-flex;align-items:center;gap:8px;background:#0f172a;color:white;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:700;font-size:14px;margin-bottom:16px;}}
-  @media print{body{padding:0;background:white;}.print-wrapper{padding:0;box-shadow:none;}.no-print{display:none!important;}}
+  @media screen{
+    body{padding:20px;background:#f1f5f9;}
+    .print-wrapper{background:white;padding:20px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:1400px;margin:0 auto;}
+    .print-btn{display:inline-flex;align-items:center;gap:8px;background:#0f172a;color:white;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:700;font-size:14px;margin-bottom:16px;}
+    .print-btn:hover{background:#1e293b;}
+  }
+  @media print{
+    body{padding:0;background:white;}
+    .print-wrapper{padding:0;box-shadow:none;}
+    .no-print{display:none!important;}
+  }
 </style>
 </head><body>
 <div class="print-wrapper">
-  <div class="no-print" style="margin-bottom:16px;display:flex;gap:10px;align-items:center;">
+  <div class="no-print" style="margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
     <button class="print-btn" onclick="window.print()">🖨️ Afdrukken (${paperSize} Liggend)</button>
     <span style="font-size:12px;color:#64748b;">${scheduledEmps.length} medewerkers · ${workDays.length} werkdagen</span>
+    <span style="font-size:11px;color:#94a3b8;margin-left:8px;">Tip: Ctrl+P → Opslaan als PDF. Schakel "Achtergrondafbeeldingen" in voor kleuren.</span>
   </div>
   <div class="page-header">
     <div>
@@ -430,7 +448,7 @@ function generatePrintHTML(data: PDFData, paperSize: "A4"|"A3"): string {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// PDF PREVIEW MODAL (buiten App)
+// PDF PREVIEW MODAL — DOWNLOAD KNOP CENTRAAL
 // ══════════════════════════════════════════════════════════════════════════════
 export const PDFPreviewModal = React.memo(function PDFPreviewModal({
   data, onClose
@@ -446,10 +464,7 @@ export const PDFPreviewModal = React.memo(function PDFPreviewModal({
     }
   }, [html]);
 
-  function openPrint() {
-    const w = window.open("","_blank");
-    if (w) { w.document.write(html); w.document.close(); setTimeout(()=>w.print(),500); }
-  }
+  // DOWNLOAD: sla HTML-bestand op — gebruiker opent het en kan dan Ctrl+P → PDF
   function downloadHTML() {
     const blob = new Blob([html],{type:"text/html;charset=utf-8"});
     const url  = URL.createObjectURL(blob);
@@ -457,17 +472,25 @@ export const PDFPreviewModal = React.memo(function PDFPreviewModal({
     a.href = url;
     const wk = data.weekLabel.replace(/[\s·/–]/g,"_").replace(/_+/g,"_");
     a.download = `planning_${data.deptName}_${wk}.html`;
-    a.click(); URL.revokeObjectURL(url);
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
-  function downloadPDF() {
-    const w = window.open("","_blank");
-    if (!w) return;
-    w.document.write(html); w.document.close();
-    setTimeout(()=>{ w.focus(); w.print(); },600);
+
+  // DIRECT AFDRUKKEN via popup (voor wie direct wil printen/PDF opslaan via browser)
+  function openAndPrint() {
+    const w = window.open("","_blank","width=1200,height=800");
+    if (!w) { alert("Pop-up geblokkeerd. Gebruik de HTML download knop."); return; }
+    w.document.write(html);
+    w.document.close();
+    // Wacht op volledige render dan print
+    w.onload = () => { setTimeout(() => { w.focus(); w.print(); }, 300); };
+    setTimeout(() => { try { w.focus(); w.print(); } catch(e){} }, 800);
   }
 
   return (
-    <Modal title="🖨️ Afdrukken & Exporteren" onClose={onClose} width="900px" zIndex={3000}>
+    <Modal title="📄 Planning Exporteren" onClose={onClose} width="900px" zIndex={3000}>
       <div style={{display:"flex",gap:10,marginBottom:16,alignItems:"center",flexWrap:"wrap"}}>
         <span style={{fontSize:11,color:"#64748B",fontWeight:700}}>PAPIERFORMAAT:</span>
         {(["A4","A3"] as const).map(o=>(
@@ -480,32 +503,39 @@ export const PDFPreviewModal = React.memo(function PDFPreviewModal({
           </button>
         ))}
       </div>
+
+      {/* Uurberekening legenda */}
+      <div style={{background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.2)",
+        borderRadius:8,padding:"8px 14px",marginBottom:12,fontSize:11,color:"#6EE7B7"}}>
+        ℹ️ <strong>Uurberekening:</strong> 8–17u = 9 bruto uur − 1u pauze = <strong>8u netto</strong> · 6–9u bruto = 30 min pauze · &lt;6u = geen pauze
+      </div>
+
       <div style={{border:"1px solid #334155",borderRadius:8,overflow:"hidden",
-        marginBottom:16,background:"#f8fafc",height:460}}>
+        marginBottom:16,background:"#f8fafc",height:440}}>
         <iframe ref={iframeRef} title="Print Preview" style={{width:"100%",height:"100%",border:"none"}}/>
       </div>
-      <div style={{background:"#1e293b",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:11,color:"#94a3b8"}}>
-        💡 <strong style={{color:"white"}}>Tip:</strong> Gebruik "Afdrukken als PDF" (Chrome/Edge: Ctrl+P → Opslaan als PDF). Schakel "Achtergrondafbeeldingen" in voor kleuren.
+
+      <div style={{background:"#1e293b",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:11,color:"#94a3b8"}}>
+        💡 <strong style={{color:"white"}}>Workflow PDF:</strong> Klik op <em>"HTML Downloaden"</em> → open het bestand → Ctrl+P → kies "Opslaan als PDF" en schakel "Achtergrondafbeeldingen" in.
+        Of klik <em>"Openen &amp; Printen"</em> voor een directe printdialoog.
       </div>
+
       <div style={{display:"flex",gap:8}}>
         <button onClick={onClose}
-          style={{flex:1,padding:10,background:"#1e293b",border:"none",color:"white",borderRadius:8,cursor:"pointer"}}>Sluiten</button>
-        <button onClick={downloadHTML}
-          style={{flex:1,padding:10,background:"#0f172a",border:"1px solid #334155",
-            color:"#38BDF8",borderRadius:8,cursor:"pointer",fontWeight:700,
-            display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-          <Download size={14}/> HTML opslaan
+          style={{flex:1,padding:10,background:"#1e293b",border:"none",color:"white",borderRadius:8,cursor:"pointer"}}>
+          Sluiten
         </button>
-        <button onClick={downloadPDF}
-          style={{flex:2,padding:10,background:"#3B82F6",border:"none",color:"white",borderRadius:8,cursor:"pointer",
-            fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-          <FileText size={15}/> Openen & PDF opslaan
-        </button>
-        <button onClick={openPrint}
+        <button onClick={openAndPrint}
           style={{flex:1,padding:10,background:"#8B5CF6",border:"none",color:"white",
             borderRadius:8,cursor:"pointer",fontWeight:700,
             display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-          <Printer size={14}/> Print
+          <Printer size={14}/> Openen &amp; Printen
+        </button>
+        <button onClick={downloadHTML}
+          style={{flex:2,padding:10,background:"#3B82F6",border:"none",color:"white",
+            borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:14,
+            display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+          <Download size={16}/> HTML Downloaden
         </button>
       </div>
     </Modal>
@@ -567,33 +597,9 @@ function LoginScreen() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ADD / EDIT MODALS — allemaal BUITEN App
+// MODALS
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Props die deze modals delen met App via een callback-object
-export interface ModalCallbacks {
-  depts:        Department[];
-  skills:       Skill[];
-  shiftDefs:    ShiftDef[];
-  clients:      Client[];
-  subcats:      Subcategory[];
-  employees:    Employee[];
-  activeDeptId: string;
-  onClose:      () => void;
-  setDeptsRaw:  React.Dispatch<React.SetStateAction<Department[]>>;
-  setSkillsRaw: React.Dispatch<React.SetStateAction<Skill[]>>;
-  setClientsRaw:React.Dispatch<React.SetStateAction<Client[]>>;
-  setSubcatsRaw:React.Dispatch<React.SetStateAction<Subcategory[]>>;
-  setShiftsRaw: React.Dispatch<React.SetStateAction<ShiftDef[]>>;
-  setEmployees: React.Dispatch<React.SetStateAction<Employee[]>>;
-  updEmployee:  (emp: Employee) => void;
-  syncSkill:    (s: Skill) => void;
-  syncClient:   (c: Client) => void;
-  syncSubcat:   (s: Subcategory) => void;
-  syncShift:    (s: ShiftDef) => void;
-}
-
-// ─── AddDeptModal ─────────────────────────────────────────────────────────────
 export const AddDeptModal = React.memo(function AddDeptModal({
   activeDeptId, setDeptsRaw, setActiveDeptId, onClose
 }: {
@@ -627,7 +633,6 @@ export const AddDeptModal = React.memo(function AddDeptModal({
   );
 });
 
-// ─── AddSkillModal ────────────────────────────────────────────────────────────
 export const AddSkillModal = React.memo(function AddSkillModal({
   editing, setSkillsRaw, syncSkill, onClose
 }: {
@@ -669,7 +674,6 @@ export const AddSkillModal = React.memo(function AddSkillModal({
   );
 });
 
-// ─── AddClientModal ───────────────────────────────────────────────────────────
 export const AddClientModal = React.memo(function AddClientModal({
   activeDeptId, setClientsRaw, onClose
 }: {
@@ -707,7 +711,6 @@ export const AddClientModal = React.memo(function AddClientModal({
   );
 });
 
-// ─── AddSubcatModal ───────────────────────────────────────────────────────────
 export const AddSubcatModal = React.memo(function AddSubcatModal({
   clientId, editing, skills, clients, setSubcatsRaw, syncSubcat, onClose
 }: {
@@ -783,7 +786,6 @@ export const AddSubcatModal = React.memo(function AddSubcatModal({
   );
 });
 
-// ─── AddShiftModal ────────────────────────────────────────────────────────────
 export const AddShiftModal = React.memo(function AddShiftModal({
   setShiftsRaw, onClose
 }: {
@@ -803,6 +805,10 @@ export const AddShiftModal = React.memo(function AddShiftModal({
   function toggle(h: number) {
     setHours(prev => prev.includes(h) ? prev.filter(x=>x!==h) : [...prev,h].sort((a,b)=>a-b));
   }
+  const bruto = hours.length;
+  const netto = nettoUren(hours);
+  const pauseMins = Math.round((bruto - netto) * 60);
+
   return (
     <Modal title="➕ Nieuwe Shift" onClose={onClose}>
       <ModalField label="NAAM SHIFT">
@@ -823,8 +829,11 @@ export const AddShiftModal = React.memo(function AddShiftModal({
           })}
         </div>
         {hours.length > 0 && (
-          <div style={{fontSize:11,color:"#64748B",marginTop:8,fontFamily:"monospace"}}>
-            {String(Math.min(...hours)).padStart(2,"0")}:00 – {String(Math.max(...hours)+1).padStart(2,"0")}:00 · {nettoUren(hours)}u netto
+          <div style={{fontSize:11,color:"#64748B",marginTop:8,fontFamily:"monospace",background:"#0f172a",padding:"6px 10px",borderRadius:6}}>
+            {String(Math.min(...hours)).padStart(2,"0")}:00 – {String(Math.max(...hours)+1).padStart(2,"0")}:00
+            &nbsp;·&nbsp;<span style={{color:"#F59E0B"}}>{bruto}u bruto</span>
+            {pauseMins > 0 && <span style={{color:"#F59E0B"}}> − {pauseMins}min pauze</span>}
+            &nbsp;=&nbsp;<span style={{color:"#10B981"}}>{netto}u netto</span>
           </div>
         )}
       </ModalField>
@@ -836,7 +845,6 @@ export const AddShiftModal = React.memo(function AddShiftModal({
   );
 });
 
-// ─── AddEmployeeModal ─────────────────────────────────────────────────────────
 export const AddEmployeeModal = React.memo(function AddEmployeeModal({
   depts, shiftDefs, employees, activeDeptId, setEmployees, onClose
 }: {
@@ -851,7 +859,7 @@ export const AddEmployeeModal = React.memo(function AddEmployeeModal({
   const [deptId,         setDeptId]        = useState(activeDeptId);
   const [hoursPerWeek,   setHoursPerWeek]  = useState(40);
   const [color,          setColor]         = useState(COLORS[employees.length % COLORS.length]);
-  const [breakPresetIdx, setBreakPresetIdx]= useState(3);
+  const [breakPresetIdx, setBreakPresetIdx]= useState(3); // standaard 60 min
   const [defaultShiftId, setDefaultShiftId]= useState(shiftDefs[0]?.id || "");
   const [hourlyWage,     setHourlyWage]    = useState(0);
 
@@ -938,7 +946,6 @@ export const AddEmployeeModal = React.memo(function AddEmployeeModal({
   );
 });
 
-// ─── ChangePasswordModal ──────────────────────────────────────────────────────
 export const ChangePasswordModal = React.memo(function ChangePasswordModal({
   userId, userName, currentUserId, onClose
 }: {
@@ -963,7 +970,7 @@ export const ChangePasswordModal = React.memo(function ChangePasswordModal({
         setStatus({type:"ok",msg:"Wachtwoord succesvol gewijzigd!"});
         setTimeout(() => onClose(), 1500);
       } else {
-        setStatus({type:"ok",msg:`Stuur een wachtwoord-reset e-mail naar de gebruiker of gebruik het Supabase dashboard om het wachtwoord van ${userName} te wijzigen.`});
+        setStatus({type:"ok",msg:`Gebruik het Supabase dashboard of stuur een reset-mail naar ${userName}.`});
       }
     } catch(e:any) { setStatus({type:"err",msg:e.message||"Fout opgetreden."}); }
     setLoading(false);
@@ -998,7 +1005,6 @@ export const ChangePasswordModal = React.memo(function ChangePasswordModal({
   );
 });
 
-// ─── VacationModal ────────────────────────────────────────────────────────────
 export const VacationModal = React.memo(function VacationModal({
   emp, onClose, updEmployee
 }: {
@@ -1088,7 +1094,6 @@ export const VacationModal = React.memo(function VacationModal({
   );
 });
 
-// ─── CustomShiftModal ─────────────────────────────────────────────────────────
 export const CustomShiftModal = React.memo(function CustomShiftModal({
   slotId, rowIdx, schedule, updSchedule, onClose
 }: {
@@ -1112,8 +1117,10 @@ export const CustomShiftModal = React.memo(function CustomShiftModal({
     updSchedule(slotId, { rows });
     onClose();
   }
-  const bruto = customEnd - customStart;
-  const netto = bruto >= 9 ? bruto - 1 : bruto;
+  const bruto     = customEnd - customStart;
+  const hoursArr  = Array.from({length:bruto}, (_,i) => customStart + i);
+  const netto     = nettoUren(hoursArr);
+  const pauseMins = Math.round((bruto - netto) * 60);
 
   return (
     <Modal title="✏️ Aangepaste Tijden" onClose={onClose} width="300px">
@@ -1130,9 +1137,10 @@ export const CustomShiftModal = React.memo(function CustomShiftModal({
         </ModalField>
       </div>
       <div style={{background:"#1e293b",borderRadius:6,padding:10,marginBottom:16,fontSize:11,color:"#64748B",fontFamily:"monospace"}}>
-        {bruto>=9
-          ? <>{bruto}u − 1u pauze = <span style={{color:"#10B981"}}>{netto}u netto</span></>
-          : <span style={{color:"#10B981"}}>{netto}u netto</span>}
+        {String(customStart).padStart(2,"0")}:00 – {String(customEnd).padStart(2,"0")}:00 &nbsp;·&nbsp;
+        <span style={{color:"#F59E0B"}}>{bruto}u bruto</span>
+        {pauseMins > 0 && <span style={{color:"#F59E0B"}}> − {pauseMins}min pauze</span>} =&nbsp;
+        <span style={{color:"#10B981"}}>{netto}u netto</span>
       </div>
       <div style={{display:"flex",gap:8}}>
         <button onClick={onClose} style={{flex:1,padding:9,background:"#1e293b",border:"none",color:"white",borderRadius:8,cursor:"pointer"}}>Annuleer</button>
@@ -1143,7 +1151,7 @@ export const CustomShiftModal = React.memo(function CustomShiftModal({
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// PLANNING CEL (buiten App)
+// PLANNING CEL
 // ══════════════════════════════════════════════════════════════════════════════
 export const PlanningCell = React.memo(function PlanningCell({
   slotId, date, avail, schedule, employees, shiftDefs, subcats,
@@ -1195,11 +1203,7 @@ export const PlanningCell = React.memo(function PlanningCell({
     updSchedule(slotId, { rows });
   }
   function applyShift(i: number, shiftId: string) {
-    // Custom shift wordt afgehandeld via de CustomShiftModal in App
-    if (shiftId === "custom") {
-      // Emit een event om de custom modal te openen — we doen dit via een callback
-      return;
-    }
+    if (shiftId === "custom") return; // handled via CustomShiftModal in App
     const sh   = getShift(shiftId);
     const rows = [...entry.rows];
     rows[i] = { ...rows[i], shiftId, selectedHours:sh ? sh.hours : rows[i].selectedHours };
@@ -1225,7 +1229,7 @@ export const PlanningCell = React.memo(function PlanningCell({
         const textCol    = emp ? contrastColor(empColor) : "white";
         const over       = emp ? isOverLimit(emp) : false;
         const netto      = emp ? nettoUrenEmp(emp, row.selectedHours) : nettoUren(row.selectedHours);
-        const breakMins  = emp ? calcBreakMins(emp.breaks, row.selectedHours) : (row.selectedHours?.length>=9?60:0);
+        const breakMins  = emp ? calcBreakMins(emp.breaks, row.selectedHours) : calcBreakMins([], row.selectedHours);
         const coverEmp   = row.coverEmployeeId ? employees.find(e=>e.id===row.coverEmployeeId) : null;
         const currentBPI = emp ? BREAK_PRESETS.findIndex(p =>
           p.breaks.length === emp.breaks.length &&
@@ -1238,7 +1242,6 @@ export const PlanningCell = React.memo(function PlanningCell({
             borderBottom:ri<entry.rows.length-1?"1px dashed #1e293b":"none",
             paddingBottom:ri<entry.rows.length-1?6:0}}>
 
-            {/* Medewerker dropdown */}
             <div style={{display:"flex",gap:2,marginBottom:3}}>
               <select value={row.employeeId} onChange={e=>setEmp(ri,e.target.value)}
                 style={{flex:1,padding:"5px 6px",borderRadius:6,
@@ -1269,7 +1272,6 @@ export const PlanningCell = React.memo(function PlanningCell({
 
             {row.employeeId && (
               <>
-                {/* Shift dropdown */}
                 <div style={{marginBottom:3}}>
                   <select value={row.shiftId||""} onChange={e=>applyShift(ri,e.target.value)}
                     style={{width:"100%",padding:"4px 6px",background:"#0f172a",
@@ -1287,7 +1289,6 @@ export const PlanningCell = React.memo(function PlanningCell({
                   </select>
                 </div>
 
-                {/* Pauze dropdown */}
                 <div style={{marginBottom:3}}>
                   <select value={currentBPI>=0?currentBPI:""}
                     onChange={e=>applyBreakPreset(ri,+e.target.value)}
@@ -1299,7 +1300,6 @@ export const PlanningCell = React.memo(function PlanningCell({
                   </select>
                 </div>
 
-                {/* Visuele uurblokjes */}
                 <div style={{display:"flex",gap:1,marginBottom:3}}>
                   {WORK_HOURS.map(h => {
                     const on  = row.selectedHours?.includes(h);
@@ -1314,7 +1314,6 @@ export const PlanningCell = React.memo(function PlanningCell({
                   })}
                 </div>
 
-                {/* Tijdinfo */}
                 <div style={{fontSize:10,color:"#94A3B8",marginBottom:3,fontWeight:600}}>
                   {shiftTimeStr(row.selectedHours)}
                   {row.selectedHours?.length>0 && (
@@ -1322,7 +1321,6 @@ export const PlanningCell = React.memo(function PlanningCell({
                   )}
                 </div>
 
-                {/* Pauze badge */}
                 {breakMins > 0 && (
                   <div style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.25)",
                     borderRadius:4,padding:"2px 6px",marginBottom:3,fontSize:10,color:"#F59E0B",
@@ -1333,7 +1331,6 @@ export const PlanningCell = React.memo(function PlanningCell({
                   </div>
                 )}
 
-                {/* Pauze cover */}
                 {emp && breakMins > 0 && sub?.requireBreakCover && (
                   <div style={{background:"rgba(245,158,11,.08)",border:"1px solid rgba(245,158,11,.2)",
                     borderRadius:4,padding:"4px 6px",marginTop:2}}>
@@ -1375,7 +1372,7 @@ export const PlanningCell = React.memo(function PlanningCell({
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ADMIN PANEL (buiten App)
+// ADMIN PANEL
 // ══════════════════════════════════════════════════════════════════════════════
 export const AdminPanel = React.memo(function AdminPanel({
   currentUserId, activeDeptId, depts, employees, setEmployees, setAddModal
@@ -1444,7 +1441,6 @@ export const AdminPanel = React.memo(function AdminPanel({
       <div style={{background:"rgba(245,158,11,.06)",border:"1px solid rgba(245,158,11,.2)",
         borderRadius:10,padding:"12px 16px",fontSize:12,color:"#F59E0B"}}>
         <strong>ℹ️ Gebruikers vs. Medewerkers:</strong> Gebruikers hebben login-toegang. Medewerkers zijn in de planning.
-        Maak beide apart aan via de respectievelijke tabbladen.
       </div>
 
       <div style={{background:"#0f172a",borderRadius:16,padding:28,border:"1px solid #1e293b"}}>
@@ -1542,17 +1538,15 @@ function App({ session }: { session:Session }) {
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [viewYear,  setViewYear]  = useState(today.getFullYear());
 
-  // Modal state — één object
   const [addModal, setAddModal] = useState<{
     type: "dept"|"skill"|"client"|"subcat"|"shift"|"employee"|"editSkill"|"editSubcat"|"changePassword"|null;
     data?: any;
   }>({ type:null });
 
-  // Afzonderlijke modals
-  const [vacModalEmpId,    setVacModalEmpId]    = useState<string|null>(null);
-  const [customShiftSlot,  setCustomShiftSlot]  = useState<{slotId:string;rowIdx:number}|null>(null);
-  const [showPDFModal,     setShowPDFModal]     = useState(false);
-  const [showCalcFor,      setShowCalcFor]      = useState<string|null>(null);
+  const [vacModalEmpId,   setVacModalEmpId]   = useState<string|null>(null);
+  const [customShiftSlot, setCustomShiftSlot] = useState<{slotId:string;rowIdx:number}|null>(null);
+  const [showPDFModal,    setShowPDFModal]    = useState(false);
+  const [showCalcFor,     setShowCalcFor]     = useState<string|null>(null);
 
   const currentUserId = session.user.id;
   const currentEmp    = employees.find(e => e.id === currentUserId) ?? employees.find(e => e.isAdmin);
@@ -1740,20 +1734,38 @@ function App({ session }: { session:Session }) {
     return candidate?.id;
   }
 
-  // ─── Auto planner ───────────────────────────────────────────────────────────
+  // ─── AUTO PLANNER — VERBETERD: respecteert FTE-doel ────────────────────────
+  // Per slot per dag: vul tot client.fteNeeded medewerkers in
   function runAutoPlanner() {
     const dates = displayDates();
     const dC    = clients.filter(c => c.departmentId===activeDeptId);
     const dE    = employees.filter(e => e.departmentId===activeDeptId);
     const ns    = { ...schedule };
-    const wht:  Record<string,Record<string,number>> = {};
+    // Weekuren tracker per medewerker
+    const weekHours: Record<string,number> = {};
+    dE.forEach(e => { weekHours[e.id] = 0; });
+
+    // Eerst bestaande geplande uren meenemen
+    dates.forEach(date => {
+      if (isWeekend(date)) return;
+      const ds = fmtDate(date);
+      dE.forEach(emp => {
+        Object.entries(schedule).filter(([sid]) => sid.startsWith(ds)).forEach(([,entry]) => {
+          entry.rows?.forEach(r => {
+            if (r.employeeId===emp.id) {
+              weekHours[emp.id] = (weekHours[emp.id]||0) + nettoUrenEmp(emp, r.selectedHours);
+            }
+          });
+        });
+      });
+    });
+    // Reset weekHours voor schone planning
+    dE.forEach(e => { weekHours[e.id] = 0; });
 
     dates.forEach(date => {
       if (isWeekend(date)) return;
       const ds = fmtDate(date);
-      const wk = getWeekKey(date);
-      if (!wht[wk]) wht[wk] = {};
-      const usedToday: string[] = [];
+      const usedToday = new Set<string>(); // per dag bijhouden welke mensen al ingepland zijn
 
       dC.forEach(client => {
         const csubs = subcats.filter(s => s.clientId===client.id);
@@ -1762,27 +1774,63 @@ function App({ session }: { session:Session }) {
           : [[`${ds}-client-${client.id}`, null] as [string,null]];
 
         slots.forEach(([slotId, sub]) => {
+          // Hoeveel medewerkers zijn nodig voor dit slot?
+          // fteNeeded op clientniveau, verdeeld over subcategorieën
+          const fteTarget = csubs.length > 0
+            ? Math.ceil(client.fteNeeded / csubs.length)  // verdeel FTE over subcats
+            : Math.ceil(client.fteNeeded);                // geen subcats: hele FTE op dit slot
+          const needed = Math.max(1, Math.round(fteTarget));
+
+          // Kandidaten gesorteerd op prioriteit
           const cands = dE.filter(e => {
-            if (!isAvail(e,date)||usedToday.includes(e.id)) return false;
+            if (!isAvail(e,date)) return false;
+            if (usedToday.has(e.id)) return false;  // al ingepland vandaag
             if (sub && !e.subCatIds.includes(sub.id)) return false;
-            const planned = (wht[wk][e.id]||0) + geplandUrenWeek(e.id,date);
-            return planned < e.hoursPerWeek;
+            return weekHours[e.id] < e.hoursPerWeek; // nog ruimte in weekuren
           }).sort((a,b) => {
-            const as=sub?calcScore(a,sub):0, bs=sub?calcScore(b,sub):0;
-            return (bs+(b.mainClientId===client.id?1000:0)) - (as+(a.mainClientId===client.id?1000:0));
+            const as = sub ? calcScore(a,sub) : 0;
+            const bs = sub ? calcScore(b,sub) : 0;
+            const aPrio = bs + (b.mainClientId===client.id?1000:0);
+            const bPrio = as + (a.mainClientId===client.id?1000:0);
+            return aPrio - bPrio;
           });
 
-          if (cands[0]) {
-            const emp = cands[0];
-            usedToday.push(emp.id);
-            const sh = (emp.defaultShiftId?getShift(emp.defaultShiftId):undefined) || shiftDefs[1] || shiftDefs[0];
-            wht[wk][emp.id] = (wht[wk][emp.id]||0) + nettoUrenEmp(emp, sh?.hours||[]);
-            const coverEmpId = assignCoverForRow(slotId, 0, emp, date);
-            ns[slotId] = { rows:[{employeeId:emp.id,shiftId:sh?.id||"",selectedHours:sh?.hours||defaultHoursForEmp(emp),coverEmployeeId:coverEmpId}] };
+          const rows: SlotRow[] = [];
+          for (let i = 0; i < needed && i < cands.length; i++) {
+            const emp = cands[i];
+            usedToday.add(emp.id);
+            const sh = (emp.defaultShiftId ? getShift(emp.defaultShiftId) : undefined)
+                    || shiftDefs[1]
+                    || shiftDefs[0];
+            const hours = sh?.hours || defaultHoursForEmp(emp);
+            weekHours[emp.id] = (weekHours[emp.id]||0) + nettoUrenEmp(emp, hours);
+
+            const coverEmpId = (() => {
+              if (!emp.breaks?.length) return undefined;
+              if (!sub || !(sub as Subcategory).requireBreakCover) return undefined;
+              const usedInSlot = rows.map(r=>r.employeeId);
+              return dE.find(e =>
+                e.id !== emp.id &&
+                !usedInSlot.includes(e.id) &&
+                isAvail(e, date)
+              )?.id;
+            })();
+
+            rows.push({
+              employeeId:   emp.id,
+              shiftId:      sh?.id || "",
+              selectedHours: hours,
+              coverEmployeeId: coverEmpId,
+            });
+          }
+
+          if (rows.length > 0) {
+            ns[slotId] = { rows };
           }
         });
       });
     });
+
     setSchedule(ns);
     Object.entries(ns).forEach(([sid,e]) => syncCell(sid,e));
   }
@@ -1818,8 +1866,6 @@ function App({ session }: { session:Session }) {
     const dates    = displayDates();
     const workDays = dates.filter(d => !isWeekend(d));
 
-    // Rij per medewerker — ook buiten EmpWeekRow houden we dit als inner function
-    // want het heeft directe closure-toegang nodig tot schedule/employees/etc.
     function EmpWeekRow({ emp }: { emp:Employee }) {
       const gepland = geplandUrenWeek(emp.id, weekStart);
       const pct     = Math.min(100, Math.round(gepland/emp.hoursPerWeek*100));
@@ -1889,18 +1935,16 @@ function App({ session }: { session:Session }) {
                       <div style={{fontSize:10,color:"#64748B",marginTop:1}}>
                         {client?.name}{sub?" · "+sub.name:""}
                       </div>
-                      <div style={{fontSize:10,color:"#94A3B8",marginTop:1}}>{netto.toFixed(1)}u netto</div>
-                      {breakMins > 0 && (
-                        <div style={{marginTop:3,background:"rgba(245,158,11,0.12)",
-                          borderRadius:3,padding:"2px 5px",fontSize:9,color:"#F59E0B",
+                      <div style={{fontSize:10,color:"#94A3B8",marginTop:1}}>
+                        {netto.toFixed(1)}u netto
+                        {breakMins > 0 && <span style={{color:"#F59E0B"}}> · {breakMins}min pauze</span>}
+                      </div>
+                      {coverEmp && (
+                        <div style={{marginTop:3,background:"rgba(16,185,129,0.1)",
+                          borderRadius:3,padding:"2px 5px",fontSize:9,color:"#10B981",
                           display:"flex",alignItems:"center",gap:3}}>
                           <Coffee size={8}/>
-                          <span>{breakMins} min pauze</span>
-                          {coverEmp && (
-                            <span style={{color:"#10B981",marginLeft:2}}>
-                              → <strong>{coverEmp.name.split(" ")[0]}</strong>
-                            </span>
-                          )}
+                          <span>Pauze cover: <strong>{coverEmp.name.split(" ")[0]}</strong></span>
                         </div>
                       )}
                     </div>
@@ -1964,7 +2008,7 @@ function App({ session }: { session:Session }) {
           </div>
         )}
 
-        {/* Overzicht-tabel: medewerkers als rijen */}
+        {/* Overzicht per medewerker */}
         <div style={{overflowX:"auto",borderRadius:10,border:"1px solid #1e293b"}}>
           <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed"}}>
             <thead>
@@ -2001,7 +2045,7 @@ function App({ session }: { session:Session }) {
           </table>
         </div>
 
-        {/* Invoer-tabel: klant/taak als rijen */}
+        {/* Invoer per klant/taak */}
         {viewType==="week" && deptClients.length>0 && (
           <div style={{marginTop:20}}>
             <div style={{fontSize:12,color:"#475569",fontWeight:700,letterSpacing:"0.06em",
@@ -2377,13 +2421,17 @@ function App({ session }: { session:Session }) {
           </div>
         </section>
 
-        {/* Shifts */}
+        {/* Shifts — met correcte uurberekening tonen */}
         <section style={{background:"#0f172a",borderRadius:12,padding:20,border:"1px solid #1e293b"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
             <div style={{display:"flex",alignItems:"center",gap:8}}><Clock size={15} color="#F59E0B"/><h3 style={{margin:0,color:"white",fontSize:14,fontWeight:700}}>Shift Definities</h3></div>
             <button onClick={()=>setAddModal({type:"shift"})} style={{background:"#F59E0B",border:"none",color:"black",padding:"5px 10px",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><Plus size={11}/>Shift</button>
           </div>
-          {shiftDefs.map(sh=>(
+          {shiftDefs.map(sh=>{
+            const bruto = sh.hours.length;
+            const netto = nettoUren(sh.hours);
+            const pauseMins = Math.round((bruto - netto) * 60);
+            return (
             <div key={sh.id} style={{background:"#1e293b",borderRadius:8,padding:12,marginBottom:8}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <input value={sh.label} onChange={e=>{const upd={...sh,label:e.target.value};setShiftsRaw(p=>p.map(x=>x.id===sh.id?upd:x));syncShift(upd);}}
@@ -2397,11 +2445,16 @@ function App({ session }: { session:Session }) {
                     style={{padding:"3px 6px",borderRadius:4,border:"none",fontSize:10,cursor:"pointer",background:on?"#F59E0B":"#334155",color:on?"black":"#475569",fontWeight:on?700:400}}>{h}</button>;
                 })}
               </div>
-              {sh.hours.length>0&&<div style={{fontSize:10,color:"#64748B",marginTop:6,fontFamily:"monospace"}}>
-                {String(Math.min(...sh.hours)).padStart(2,"0")}:00 – {String(Math.max(...sh.hours)+1).padStart(2,"0")}:00 · {nettoUren(sh.hours)}u netto
-              </div>}
+              {sh.hours.length>0&&(
+                <div style={{fontSize:10,color:"#64748B",marginTop:6,fontFamily:"monospace",background:"#0f172a",padding:"4px 8px",borderRadius:4}}>
+                  {String(Math.min(...sh.hours)).padStart(2,"0")}:00 – {String(Math.max(...sh.hours)+1).padStart(2,"0")}:00
+                  &nbsp;·&nbsp;<span style={{color:"#F59E0B"}}>{bruto}u bruto</span>
+                  {pauseMins > 0 && <span style={{color:"#F59E0B"}}> − {pauseMins}min pauze</span>}
+                  &nbsp;=&nbsp;<span style={{color:"#10B981",fontWeight:700}}>{netto}u netto</span>
+                </div>
+              )}
             </div>
-          ))}
+          );})}
         </section>
       </div>
     );
@@ -2492,7 +2545,6 @@ function App({ session }: { session:Session }) {
           </div>
         )}
 
-        {/* Filters */}
         <div style={{gridColumn:"1/-1",background:"#0f172a",borderRadius:12,padding:16,border:"1px solid #1e293b",display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
           <select value={filterDeptId} onChange={e=>{setFilterDeptId(e.target.value);setFilterClientId("all");}}
             style={{background:"#1e293b",color:"white",border:"1px solid #334155",borderRadius:6,padding:"5px 10px",fontSize:12}}>
@@ -2506,12 +2558,12 @@ function App({ session }: { session:Session }) {
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
+          <span style={{fontSize:11,color:"#475569"}}>Netto uren (na pauze aftrek) worden gebruikt voor kostenberekening</span>
         </div>
 
-        {/* KPI */}
         <div style={{gridColumn:"1/-1",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:14}}>
           {[
-            {label:"Loonkosten periode",value:fmtEuro(totalKosten),sub:`${totalUren.toFixed(1)} uur gewerkt`,icon:<Euro size={18}/>,color:"#3B82F6"},
+            {label:"Loonkosten periode",value:fmtEuro(totalKosten),sub:`${totalUren.toFixed(1)} netto uur gewerkt`,icon:<Euro size={18}/>,color:"#3B82F6"},
             {label:"Schatting per maand",value:fmtEuro(maandSchat),sub:"Geëxtrapoleerd",icon:<TrendingUp size={18}/>,color:"#10B981"},
             {label:"Schatting per jaar", value:fmtEuro(jaarSchat), sub:"Geëxtrapoleerd",icon:<PieChart size={18}/>,color:"#8B5CF6"},
           ].map(kpi=>(
@@ -2526,7 +2578,6 @@ function App({ session }: { session:Session }) {
           ))}
         </div>
 
-        {/* Uurlonen */}
         <section style={{background:"#0f172a",borderRadius:14,padding:22,border:"1px solid #1e293b"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:18}}>
             <Users size={17} color="#F59E0B"/>
@@ -2554,7 +2605,6 @@ function App({ session }: { session:Session }) {
           ))}
         </section>
 
-        {/* Kosten per klant */}
         <section style={{background:"#0f172a",borderRadius:14,padding:22,border:"1px solid #1e293b",gridColumn:"span 2"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:18}}>
             <Building2 size={17} color="#38BDF8"/>
@@ -2572,7 +2622,7 @@ function App({ session }: { session:Session }) {
                 <span style={{fontWeight:700,color:"#38BDF8",fontSize:14}}>{clientData.naam}</span>
                 <div style={{textAlign:"right"}}>
                   <div style={{fontWeight:700,color:clientData.kosten>0?"white":"#475569"}}>{fmtEuro(clientData.kosten)}</div>
-                  <div style={{fontSize:10,color:"#64748B"}}>{clientData.uren.toFixed(1)} uur</div>
+                  <div style={{fontSize:10,color:"#64748B"}}>{clientData.uren.toFixed(1)} netto uur</div>
                 </div>
               </div>
               {Object.entries(clientData.subcats).map(([subId,subData])=>(
@@ -2582,7 +2632,7 @@ function App({ session }: { session:Session }) {
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
                       <div style={{textAlign:"right"}}>
                         <div style={{color:subData.kosten>0?"#94A3B8":"#334155",fontSize:13,fontWeight:600}}>{fmtEuro(subData.kosten)}</div>
-                        <div style={{fontSize:9,color:"#475569"}}>{subData.uren.toFixed(1)} uur</div>
+                        <div style={{fontSize:9,color:"#475569"}}>{subData.uren.toFixed(1)} netto uur</div>
                       </div>
                       <button onClick={()=>setShowCalcFor(p=>p===subId?null:subId)}
                         style={{background:"#0f172a",border:"1px solid #334155",color:"#64748B",borderRadius:5,padding:"3px 8px",fontSize:10,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
@@ -2598,7 +2648,7 @@ function App({ session }: { session:Session }) {
                           <span style={{width:8,height:8,borderRadius:"50%",background:d.empColor,display:"inline-block",flexShrink:0}}/>
                           <span style={{color:"#94A3B8"}}>{d.empNaam}</span>
                           <span style={{color:"#475569",fontSize:9}}>{d.datum}</span>:
-                          <span style={{color:"#10B981"}}>{d.netto.toFixed(2)}u</span>
+                          <span style={{color:"#10B981"}}>{d.netto.toFixed(2)}u netto</span>
                           × {fmtEuro(d.loon)} = <span style={{color:"white",fontWeight:"bold"}}>{fmtEuro(d.kosten)}</span>
                         </div>
                       ))}
@@ -2640,15 +2690,10 @@ function App({ session }: { session:Session }) {
     <div style={{minHeight:"100vh",background:"#020617",color:"#F8FAFC",
       fontFamily:"'Segoe UI',system-ui,sans-serif",padding:16}}>
 
-      {/* Modals */}
       {renderAddModal()}
 
       {vacModalEmp && (
-        <VacationModal
-          emp={vacModalEmp}
-          onClose={()=>setVacModalEmpId(null)}
-          updEmployee={updEmployee}
-        />
+        <VacationModal emp={vacModalEmp} onClose={()=>setVacModalEmpId(null)} updEmployee={updEmployee}/>
       )}
 
       {customShiftSlot && (
@@ -2676,7 +2721,7 @@ function App({ session }: { session:Session }) {
         />
       )}
 
-      {/* Navigatie */}
+      {/* Navigatie balk */}
       <nav style={{display:"flex",justifyContent:"space-between",alignItems:"center",
         marginBottom:18,borderBottom:"1px solid #0f172a",paddingBottom:14,flexWrap:"wrap",gap:10}}>
         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
@@ -2701,7 +2746,6 @@ function App({ session }: { session:Session }) {
         </div>
 
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-          {/* FTE toggle */}
           <div style={{display:"flex",alignItems:"center",gap:6,background:"#0f172a",padding:"6px 12px",borderRadius:8,border:"1px solid #1e293b"}}>
             <span style={{fontSize:11,color:"#64748B"}}>FTE</span>
             <button onClick={()=>setUseFTE(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center"}}>
@@ -2709,9 +2753,8 @@ function App({ session }: { session:Session }) {
             </button>
           </div>
 
-          {/* Auto-planner */}
           <button onClick={()=>{
-            if(window.confirm("Automatisch inplannen? Bestaande planning wordt overschreven."))
+            if(window.confirm("Automatisch inplannen tot FTE-doel per klant? Bestaande planning wordt overschreven."))
               runAutoPlanner();
           }} style={{background:"#10B981",color:"white",border:"none",padding:"8px 16px",
             borderRadius:8,cursor:"pointer",fontWeight:700,
@@ -2719,27 +2762,23 @@ function App({ session }: { session:Session }) {
             <Zap size={14}/> Auto-planner
           </button>
 
-          {/* Leegmaken */}
           <button onClick={()=>{if(window.confirm("Planning leegmaken?")){setSchedule({});sb.from("schedule").delete().neq("slot_id","__never__");}}}
             style={{background:"rgba(239,68,68,.1)",color:"#EF4444",border:"1px solid rgba(239,68,68,.2)",
               padding:"8px 12px",borderRadius:8,cursor:"pointer",display:"flex",alignItems:"center",gap:6,fontSize:12}}>
             <Trash2 size={13}/>Leeg
           </button>
 
-          {/* PDF */}
           <button onClick={()=>setShowPDFModal(true)}
             style={{background:"#8B5CF6",color:"white",border:"none",padding:"8px 14px",
               borderRadius:8,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",gap:6,fontSize:13}}>
-            <Printer size={14}/> Afdrukken
+            <Download size={14}/> Exporteren
           </button>
 
-          {/* Wachtwoord eigen account */}
           <button onClick={()=>setAddModal({type:"changePassword",data:{userId:currentUserId,userName:currentEmp?.name||"Mijn account"}})}
             style={{background:"#0f172a",border:"1px solid #1e293b",color:"#64748B",padding:"8px 10px",borderRadius:8,cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12}}>
             <Key size={13}/>
           </button>
 
-          {/* Uitloggen */}
           <button onClick={()=>sb.auth.signOut()}
             style={{background:"transparent",color:"#475569",border:"1px solid #1e293b",
               padding:"8px 12px",borderRadius:8,cursor:"pointer",display:"flex",alignItems:"center",gap:6,fontSize:12}}>
@@ -2782,8 +2821,8 @@ function App({ session }: { session:Session }) {
 // ROOT
 // ══════════════════════════════════════════════════════════════════════════════
 export default function AppRoot() {
-  const [session,      setSession]      = useState<Session|null>(null);
-  const [authChecked,  setAuthChecked]  = useState(false);
+  const [session,     setSession]     = useState<Session|null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
     sb.auth.getSession().then(({data}) => { setSession(data.session); setAuthChecked(true); });
