@@ -270,6 +270,7 @@ function generatePrintHTML(data: PDFData, paperSize: "A4"|"A3"): string {
   const { deptName, weekLabel, dates, employees, clients, subcats, schedule, shiftDefs } = data;
   const workDays = dates.filter(d => !isWeekend(d));
 
+  // Verzamel alle ingeplande medewerkers
   const scheduledEmpIds = new Set<string>();
   workDays.forEach(date => {
     const ds = fmtDate(date);
@@ -283,82 +284,34 @@ function generatePrintHTML(data: PDFData, paperSize: "A4"|"A3"): string {
     .filter(e => scheduledEmpIds.has(e.id))
     .sort((a,b) => a.name.localeCompare(b.name));
 
-  function getEmpDayInfo(emp: Employee, date: Date) {
+  // Bepaal welke uren daadwerkelijk gebruikt worden (voor kolombreedte)
+  const usedHours = new Set<number>();
+  workDays.forEach(date => {
     const ds = fmtDate(date);
-    const infos: { timeStr:string; clientName:string; subName:string; breakMins:number; coverName:string; shiftLabel:string; color:string }[] = [];
-    clients.forEach(client => {
-      const csubs = subcats.filter(s => s.clientId === client.id);
-      const slots = csubs.length
-        ? csubs.map(s => [`${ds}-${s.id}`, s, client] as [string, Subcategory|null, Client])
-        : [[`${ds}-client-${client.id}`, null, client] as [string, Subcategory|null, Client]];
-      slots.forEach(([slotId, sub, cl]) => {
-        const entry = schedule[slotId];
-        entry?.rows?.forEach(row => {
-          if (row.employeeId !== emp.id) return;
-          const timeStr   = shiftTimeStr(row.selectedHours);
-          const breakMins = calcBreakMins(emp.breaks, row.selectedHours);
-          const coverEmp  = row.coverEmployeeId ? employees.find(e => e.id === row.coverEmployeeId) : null;
-          const sh        = shiftDefs.find(s => s.id === row.shiftId);
-          infos.push({ timeStr, clientName:cl.name, subName:sub?.name||"Algemeen",
-            breakMins, coverName:coverEmp?coverEmp.name.split(" ")[0]:"",
-            shiftLabel:sh?.label||(row.shiftId==="custom"?"Custom":""), color:emp.color });
-        });
-      });
+    Object.entries(schedule).forEach(([slotId, entry]) => {
+      if (slotId.startsWith(ds)) {
+        entry.rows?.forEach(r => { r.selectedHours?.forEach(h => usedHours.add(h)); });
+      }
     });
-    return infos;
-  }
-
-  const isA3  = paperSize === "A3";
-  const pageW = isA3 ? 420 : 297;
-  const pageH = isA3 ? 297 : 210;
-  const dpi   = 3.7795;
-  const pxW   = Math.round(pageW * dpi);
-  const pxH   = Math.round(pageH * dpi);
+  });
+  // Minimaal 8–17 tonen, anders gaten
+  const minH = Math.min(...(usedHours.size ? [...usedHours] : [8]), 8);
+  const maxH = Math.max(...(usedHours.size ? [...usedHours] : [16]), 16);
+  const displayHours: number[] = [];
+  for (let h = minH; h <= maxH; h++) displayHours.push(h);
 
   const empHex = (hex: string, a: number) => {
     const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
     return `rgba(${r},${g},${b},${a})`;
   };
 
-  const colW     = Math.floor((pxW - 180) / workDays.length);
-  const rowH     = Math.max(48, Math.floor((pxH - 120) / Math.max(scheduledEmps.length, 1)));
-  const fontSize = Math.max(8, Math.min(12, rowH / 4));
+  // Layout: één tabel per dag (medewerker = rij, uur = kolom)
+  // Naam staat in ELKE bezette uurcel (via CSS overflow hidden + repeat)
+  const isA3 = paperSize === "A3";
 
-  const dayHeaders = workDays.map((d,i) => `
-    <div style="position:absolute;left:${180+i*colW}px;top:0;width:${colW}px;height:60px;
-      border-left:1px solid #cbd5e1;display:flex;flex-direction:column;align-items:center;
-      justify-content:center;background:#0f172a;color:white;">
-      <div style="font-size:${fontSize+2}px;font-weight:800;">${dayLabel(d).slice(0,2)} ${d.getDate()}</div>
-      <div style="font-size:${fontSize-1}px;color:#94a3b8;">${MONTH_LABELS[d.getMonth()].slice(0,3)} · Wk ${weekNum(d)}</div>
-    </div>`).join("");
-
-  const empRows = scheduledEmps.map((emp, ri) => {
-    const top   = 60 + ri * rowH;
-    const bgRow = ri % 2 === 0 ? "#ffffff" : "#f8fafc";
-
-    const dayCells = workDays.map((date, ci) => {
-      const infos = getEmpDayInfo(emp, date);
-      const left  = 180 + ci * colW;
-      if (!infos.length) {
-        return `<div style="position:absolute;left:${left}px;top:${top}px;width:${colW}px;height:${rowH}px;
-          border-left:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;background:${bgRow};
-          display:flex;align-items:center;justify-content:center;">
-          <span style="color:#cbd5e1;font-size:${fontSize}px;">—</span></div>`;
-      }
-      const cellContent = infos.map(info => `
-        <div style="background:${empHex(info.color,0.12)};border-left:3px solid ${info.color};
-          border-radius:3px;padding:2px 4px;margin-bottom:2px;">
-          <div style="font-weight:800;font-size:${fontSize+1}px;color:#0f172a;">${info.timeStr}</div>
-          <div style="font-size:${fontSize-1}px;color:#334155;">${info.subName}</div>
-          ${info.breakMins>0?`<div style="font-size:${fontSize-2}px;color:#b45309;">
-            ☕ ${info.breakMins}min${info.coverName?` → ${info.coverName}`:""}</div>`:""}
-        </div>`).join("");
-      return `<div style="position:absolute;left:${left}px;top:${top}px;width:${colW}px;height:${rowH}px;
-        border-left:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;background:${bgRow};
-        padding:3px;overflow:hidden;box-sizing:border-box;">${cellContent}</div>`;
-    }).join("");
-
-    const netto = workDays.reduce((sum, date) => {
+  // Netto uren per medewerker per week (voor de samenvatting links)
+  function empNettoWeek(emp: Employee): number {
+    return workDays.reduce((sum, date) => {
       const ds = fmtDate(date);
       let dayHours: number[] = [];
       Object.entries(schedule).forEach(([slotId, entry]) => {
@@ -367,26 +320,168 @@ function generatePrintHTML(data: PDFData, paperSize: "A4"|"A3"): string {
           if (r.employeeId === emp.id) dayHours = [...dayHours, ...r.selectedHours];
         });
       });
-      const uniqueHours = [...new Set(dayHours)];
-      return sum + (uniqueHours.length > 0 ? nettoUrenEmp(emp, uniqueHours) : 0);
+      const uniq = [...new Set(dayHours)];
+      return sum + (uniq.length > 0 ? nettoUrenEmp(emp, uniq) : 0);
     }, 0);
+  }
+
+  // Haal per medewerker per dag de geplande uren op (inclusief pauze-info)
+  function getEmpDayRows(emp: Employee, date: Date): Array<{hours: number[]; breakMins: number; subName: string; coverName: string}> {
+    const ds = fmtDate(date);
+    const result: Array<{hours: number[]; breakMins: number; subName: string; coverName: string}> = [];
+    clients.forEach(client => {
+      const csubs = subcats.filter(s => s.clientId === client.id);
+      const slots = csubs.length
+        ? csubs.map(s => [`${ds}-${s.id}`, s] as [string, Subcategory|null])
+        : [[`${ds}-client-${client.id}`, null] as [string, null]];
+      slots.forEach(([slotId, sub]) => {
+        const entry = schedule[slotId];
+        entry?.rows?.forEach(row => {
+          if (row.employeeId !== emp.id) return;
+          const breakMins = calcBreakMins(emp.breaks, row.selectedHours);
+          const coverEmp  = row.coverEmployeeId ? employees.find(e => e.id === row.coverEmployeeId) : null;
+          result.push({
+            hours: row.selectedHours || [],
+            breakMins,
+            subName: sub?.name || client.name,
+            coverName: coverEmp ? coverEmp.name.split(" ")[0] : "",
+          });
+        });
+      });
+    });
+    return result;
+  }
+
+  // Bouw per dag een tabel
+  const dagTables = workDays.map(date => {
+    const ds       = fmtDate(date);
+    const dl       = dayLabel(date);
+    const dayLabel2 = `${dl} ${date.getDate()} ${MONTH_LABELS[date.getMonth()].slice(0,3)}`;
+
+    // Uurkolom headers
+    const hourHeaders = displayHours.map(h =>
+      `<th style="width:38px;min-width:34px;padding:3px 1px;text-align:center;font-size:9px;
+        color:#64748b;font-weight:600;border-left:1px solid #e2e8f0;background:#f8fafc;">
+        ${String(h).padStart(2,"0")}
+      </th>`
+    ).join("");
+
+    // Medewerker rijen
+    const empRowsHtml = scheduledEmps.map((emp, ri) => {
+      const rows = getEmpDayRows(emp, date);
+      const netto = empNettoWeek(emp);
+      const bgRow = ri % 2 === 0 ? "#ffffff" : "#fafbfd";
+
+      if (!rows.length) {
+        // Niet ingepland deze dag
+        return `<tr style="background:${bgRow};">
+          <td style="padding:4px 8px;white-space:nowrap;border-right:2px solid ${emp.color};
+            background:${empHex(emp.color,0.06)};min-width:130px;max-width:150px;">
+            <div style="display:flex;align-items:center;gap:5px;">
+              <div style="width:8px;height:8px;border-radius:50%;background:${emp.color};flex-shrink:0;"></div>
+              <div>
+                <div style="font-weight:700;font-size:10px;color:#0f172a;">${emp.name}</div>
+                <div style="font-size:8px;color:#94a3b8;">${netto.toFixed(1)}u / ${emp.hoursPerWeek}u</div>
+              </div>
+            </div>
+          </td>
+          ${displayHours.map(() => `<td style="background:${bgRow};border-left:1px solid #f1f5f9;"></td>`).join("")}
+        </tr>`;
+      }
+
+      // Per rij (kan meerdere shifts hebben op 1 dag)
+      return rows.map((row, rowIdx) => {
+        const isBreak = (h: number) => emp.breaks.some(b =>
+          h >= b.startHour + b.startMin/60 && h < b.endHour + b.endMin/60
+        );
+
+        const hourCells = displayHours.map(h => {
+          const active = row.hours.includes(h);
+          const brk    = active && isBreak(h);
+          if (!active) {
+            return `<td style="background:${bgRow};border-left:1px solid #f1f5f9;height:32px;"></td>`;
+          }
+          // Naam in elk actief uurblok
+          const empFirstName = emp.name.split(" ")[0];
+          const cellBg = brk
+            ? `repeating-linear-gradient(45deg,${empHex(emp.color,0.18)} 0,${empHex(emp.color,0.18)} 3px,${empHex(emp.color,0.06)} 3px,${empHex(emp.color,0.06)} 6px)`
+            : empHex(emp.color, 0.18);
+          return `<td style="background:${cellBg};border-left:1px solid ${empHex(emp.color,0.3)};
+            height:32px;padding:1px 2px;overflow:hidden;vertical-align:middle;position:relative;">
+            <div style="font-size:7.5px;font-weight:700;color:${emp.color};
+              white-space:nowrap;overflow:hidden;text-overflow:clip;line-height:1.2;
+              filter:brightness(0.7);">
+              ${empFirstName}${brk ? " ☕" : ""}
+            </div>
+          </td>`;
+        }).join("");
+
+        const nameCell = rowIdx === 0
+          ? `<td rowspan="${rows.length}" style="padding:4px 8px;white-space:nowrap;
+              border-right:2px solid ${emp.color};background:${empHex(emp.color,0.06)};
+              min-width:130px;max-width:150px;vertical-align:middle;">
+              <div style="display:flex;align-items:center;gap:5px;">
+                <div style="width:8px;height:8px;border-radius:50%;background:${emp.color};flex-shrink:0;"></div>
+                <div>
+                  <div style="font-weight:700;font-size:10px;color:#0f172a;">${emp.name}</div>
+                  <div style="font-size:8px;color:#94a3b8;">${netto.toFixed(1)}u / ${emp.hoursPerWeek}u</div>
+                  ${row.subName ? `<div style="font-size:7px;color:#64748b;">${row.subName}</div>` : ""}
+                  ${row.breakMins > 0 ? `<div style="font-size:7px;color:#b45309;">☕ ${row.breakMins}min${row.coverName ? ` → ${row.coverName}` : ""}</div>` : ""}
+                </div>
+              </div>
+            </td>`
+          : "";
+
+        return `<tr style="background:${bgRow};">${nameCell}${hourCells}</tr>`;
+      }).join("");
+    }).join("");
 
     return `
-      <div style="position:absolute;left:0;top:${top}px;width:180px;height:${rowH}px;
-        background:${empHex(emp.color,0.08)};border-right:2px solid ${emp.color};
-        border-bottom:1px solid #e2e8f0;display:flex;align-items:center;
-        padding:0 8px;box-sizing:border-box;overflow:hidden;">
-        <div style="width:10px;height:10px;border-radius:50%;background:${emp.color};flex-shrink:0;margin-right:8px;"></div>
-        <div style="overflow:hidden;">
-          <div style="font-weight:700;font-size:${fontSize+1}px;color:#0f172a;
-            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${emp.name}</div>
-          <div style="font-size:${fontSize-2}px;color:#64748b;">${netto.toFixed(1)}u / ${emp.hoursPerWeek}u</div>
+      <div style="margin-bottom:18px;page-break-inside:avoid;">
+        <div style="background:#0f172a;color:white;padding:6px 12px;border-radius:6px 6px 0 0;
+          font-weight:800;font-size:12px;display:flex;justify-content:space-between;align-items:center;">
+          <span>${dayLabel2}</span>
+          <span style="font-size:10px;color:#94a3b8;font-weight:400;">Wk ${weekNum(date)}</span>
         </div>
-      </div>${dayCells}`;
+        <div style="overflow-x:auto;">
+          <table style="border-collapse:collapse;width:100%;min-width:600px;">
+            <thead>
+              <tr style="background:#f8fafc;">
+                <th style="width:140px;min-width:130px;padding:4px 8px;text-align:left;
+                  font-size:9px;color:#64748b;font-weight:700;border-right:2px solid #e2e8f0;
+                  letter-spacing:0.05em;">MEDEWERKER</th>
+                ${hourHeaders}
+              </tr>
+            </thead>
+            <tbody>${empRowsHtml}</tbody>
+          </table>
+        </div>
+      </div>`;
   }).join("");
 
-  const totalW = 180 + workDays.length * colW;
-  const totalH = 60  + scheduledEmps.length * rowH;
+  // Totaaloverzicht
+  const summaryRows = scheduledEmps.map(emp => {
+    const netto = empNettoWeek(emp);
+    const pct   = Math.min(100, Math.round(netto / emp.hoursPerWeek * 100));
+    const over  = netto > emp.hoursPerWeek;
+    return `<tr>
+      <td style="padding:5px 10px;font-weight:600;font-size:11px;color:#0f172a;
+        border-left:3px solid ${emp.color};">${emp.name}</td>
+      <td style="padding:5px 10px;font-size:11px;color:${over?"#dc2626":"#16a34a"};font-weight:700;">
+        ${netto.toFixed(1)}u</td>
+      <td style="padding:5px 10px;font-size:11px;color:#64748b;">${emp.hoursPerWeek}u</td>
+      <td style="padding:5px 10px;">
+        <div style="width:80px;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;">
+          <div style="width:${pct}%;height:100%;background:${over?"#dc2626":emp.color};border-radius:3px;"></div>
+        </div>
+      </td>
+      <td style="padding:5px 10px;font-size:10px;color:${over?"#dc2626":"#64748b"};">
+        ${over ? "⚠ Overschreden" : `${pct}%`}</td>
+    </tr>`;
+  }).join("");
+
+  const totalW = 0; // niet meer nodig
+  const totalH = 0;
 
   // GEEN print() call — puur voor download als HTML-bestand
   return `<!DOCTYPE html><html><head>
@@ -394,54 +489,81 @@ function generatePrintHTML(data: PDFData, paperSize: "A4"|"A3"): string {
 <title>Planning ${deptName} — ${weekLabel}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;}
-  @page{size:${paperSize} landscape;margin:8mm;}
-  body{font-family:'Helvetica Neue',Arial,sans-serif;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-  .page-header{padding:10px 0 8px 0;border-bottom:3px solid #0f172a;margin-bottom:14px;display:flex;justify-content:space-between;align-items:flex-end;}
-  .page-title{font-size:22px;font-weight:900;color:#0f172a;letter-spacing:-0.5px;}
-  .page-subtitle{font-size:12px;color:#64748b;margin-top:4px;}
-  .page-meta{font-size:11px;color:#94a3b8;text-align:right;}
-  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;padding-top:8px;border-top:1px solid #e2e8f0;}
-  .legend-item{display:flex;align-items:center;gap:5px;font-size:10px;color:#475569;}
-  .grid-wrap{position:relative;width:${totalW}px;overflow:hidden;}
-  .emp-label-header{position:absolute;left:0;top:0;width:180px;height:60px;background:#0f172a;
-    border-right:2px solid #334155;display:flex;align-items:center;padding:0 12px;
-    font-size:${fontSize}px;font-weight:700;color:#94a3b8;letter-spacing:0.06em;}
+  @page{size:${isA3?"A3":"A4"} landscape;margin:8mm;}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;background:#fff;
+    -webkit-print-color-adjust:exact;print-color-adjust:exact;font-size:11px;}
+  table{border-collapse:collapse;}
+  td,th{border-bottom:1px solid #e2e8f0;}
   @media screen{
     body{padding:20px;background:#f1f5f9;}
-    .print-wrapper{background:white;padding:20px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:1400px;margin:0 auto;}
-    .print-btn{display:inline-flex;align-items:center;gap:8px;background:#0f172a;color:white;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:700;font-size:14px;margin-bottom:16px;}
+    .print-wrapper{background:white;padding:24px;border-radius:12px;
+      box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:1600px;margin:0 auto;}
+    .print-btn{display:inline-flex;align-items:center;gap:8px;background:#0f172a;color:white;
+      border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:700;font-size:14px;margin-bottom:16px;}
     .print-btn:hover{background:#1e293b;}
   }
   @media print{
     body{padding:0;background:white;}
     .print-wrapper{padding:0;box-shadow:none;}
     .no-print{display:none!important;}
+    div{page-break-inside:avoid;}
   }
 </style>
 </head><body>
 <div class="print-wrapper">
-  <div class="no-print" style="margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-    <button class="print-btn" onclick="window.print()">🖨️ Afdrukken (${paperSize} Liggend)</button>
+  <div class="no-print" style="margin-bottom:20px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+    <button class="print-btn" onclick="window.print()">🖨️ Afdrukken / Opslaan als PDF (${isA3?"A3":"A4"} Liggend)</button>
     <span style="font-size:12px;color:#64748b;">${scheduledEmps.length} medewerkers · ${workDays.length} werkdagen</span>
-    <span style="font-size:11px;color:#94a3b8;margin-left:8px;">Tip: Ctrl+P → Opslaan als PDF. Schakel "Achtergrondafbeeldingen" in voor kleuren.</span>
+    <span style="font-size:11px;color:#94a3b8;">Tip: Ctrl+P → Opslaan als PDF → Achtergrondafbeeldingen aan</span>
   </div>
-  <div class="page-header">
+
+  <!-- Header -->
+  <div style="border-bottom:3px solid #0f172a;padding-bottom:10px;margin-bottom:20px;
+    display:flex;justify-content:space-between;align-items:flex-end;">
     <div>
-      <div class="page-title">${deptName} — Weekplanning</div>
-      <div class="page-subtitle">${weekLabel} · Afgedrukt: ${new Date().toLocaleDateString("nl-NL",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</div>
+      <div style="font-size:20px;font-weight:900;color:#0f172a;letter-spacing:-0.5px;">
+        ${deptName} — Weekplanning
+      </div>
+      <div style="font-size:11px;color:#64748b;margin-top:4px;">
+        ${weekLabel} · Afgedrukt: ${new Date().toLocaleDateString("nl-NL",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}
+      </div>
     </div>
-    <div class="page-meta">${scheduledEmps.length} medewerkers ingepland<br/>${workDays.length} werkdagen</div>
+    <div style="font-size:10px;color:#94a3b8;text-align:right;line-height:1.6;">
+      ${scheduledEmps.length} medewerkers ingepland<br/>
+      Netto uren = bruto − pauze (≥9u→60min, ≥6u→30min)
+    </div>
   </div>
-  <div class="grid-wrap" style="height:${totalH}px;">
-    <div class="emp-label-header">MEDEWERKER</div>
-    ${dayHeaders}
-    ${empRows}
+
+  <!-- Dag-voor-dag tijdlijn -->
+  ${dagTables}
+
+  <!-- Weekoverzicht -->
+  <div style="margin-top:24px;border-top:2px solid #0f172a;padding-top:16px;">
+    <div style="font-size:13px;font-weight:800;color:#0f172a;margin-bottom:10px;">
+      WEEKOVERZICHT — NETTO UREN
+    </div>
+    <table style="width:auto;border-collapse:collapse;">
+      <thead>
+        <tr style="background:#f8fafc;">
+          <th style="padding:5px 10px;text-align:left;font-size:10px;color:#64748b;font-weight:700;border-bottom:2px solid #e2e8f0;min-width:160px;">MEDEWERKER</th>
+          <th style="padding:5px 10px;text-align:left;font-size:10px;color:#64748b;font-weight:700;border-bottom:2px solid #e2e8f0;">GEPLAND</th>
+          <th style="padding:5px 10px;text-align:left;font-size:10px;color:#64748b;font-weight:700;border-bottom:2px solid #e2e8f0;">CONTRACT</th>
+          <th style="padding:5px 10px;text-align:left;font-size:10px;color:#64748b;font-weight:700;border-bottom:2px solid #e2e8f0;min-width:100px;">BEZETTING</th>
+          <th style="padding:5px 10px;text-align:left;font-size:10px;color:#64748b;font-weight:700;border-bottom:2px solid #e2e8f0;">STATUS</th>
+        </tr>
+      </thead>
+      <tbody>${summaryRows}</tbody>
+    </table>
   </div>
-  <div class="legend">
-    <div class="legend-item"><span style="display:inline-block;width:12px;height:12px;background:#0f172a;border-radius:2px;"></span> Naam medewerker + uren/week</div>
-    <div class="legend-item">☕ = Pauze (met duur)</div>
-    <div class="legend-item">→ = Vervanging tijdens pauze</div>
-    <div class="legend-item">— = Niet ingepland op deze dag</div>
+
+  <!-- Legenda -->
+  <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:14px;padding-top:10px;
+    border-top:1px solid #e2e8f0;font-size:9px;color:#64748b;">
+    <span>■ Gekleurd blok = ingepland uur (naam zichtbaar per blok)</span>
+    <span>☕ = Pauze uur (gearceerd)</span>
+    <span>→ = Pauze vervanger</span>
+    <span>⚠ = Weekuren overschreden</span>
+    <span>Netto uren: ≥9u bruto − 60min · ≥6u − 30min · &lt;6u geen pauze</span>
   </div>
 </div>
 </body></html>`;
@@ -1209,7 +1331,7 @@ export const PlanningCell = React.memo(function PlanningCell({
   const sub   = subcats.find(s => slotId.includes(s.id));
 
   function getShift(id: string) { return shiftDefs.find(s => s.id === id); }
-  function isOverLimit(emp: Employee) { return geplandUrenWeek(emp.id, date) >= emp.hoursPerWeek; }
+  function isOverLimit(emp: Employee) { return geplandUrenWeek(emp.id, date) > emp.hoursPerWeek + 0.09; }
 
   function availForRow(ri: number): Employee[] {
     const used = entry.rows.filter((_,i) => i !== ri).map(r => r.employeeId).filter(Boolean);
@@ -1580,7 +1702,7 @@ function App({ session }: { session:Session }) {
 
   const [vacModalEmpId,   setVacModalEmpId]   = useState<string|null>(null);
   const [customShiftSlot, setCustomShiftSlot] = useState<{slotId:string;rowIdx:number}|null>(null);
-  const [showPDFModal,    setShowPDFModal]    = useState(false);
+
   const [showCalcFor,     setShowCalcFor]     = useState<string|null>(null);
 
   const currentUserId = session.user.id;
@@ -2741,21 +2863,6 @@ function App({ session }: { session:Session }) {
         />
       )}
 
-      {showPDFModal && (
-        <PDFPreviewModal
-          data={{
-            deptName:  activeDept?.name || "",
-            weekLabel: viewType==="week"
-              ? `Week ${weekNum(weekStart)} · ${weekStart.toLocaleDateString("nl-NL",{day:"numeric",month:"short"})} – ${new Date(weekStart.getTime()+6*86400000).toLocaleDateString("nl-NL",{day:"numeric",month:"short",year:"numeric"})}`
-              : `${MONTH_LABELS[viewMonth]} ${viewYear}`,
-            weekStart,
-            dates:     displayDates(),
-            employees, clients:deptClients, subcats, schedule, skills, shiftDefs,
-          }}
-          onClose={()=>setShowPDFModal(false)}
-        />
-      )}
-
       {/* Navigatie balk */}
       <nav style={{display:"flex",justifyContent:"space-between",alignItems:"center",
         marginBottom:18,borderBottom:"1px solid #0f172a",paddingBottom:14,flexWrap:"wrap",gap:10}}>
@@ -2803,10 +2910,30 @@ function App({ session }: { session:Session }) {
             <Trash2 size={13}/>Leeg
           </button>
 
-          <button onClick={()=>setShowPDFModal(true)}
-            style={{background:"#8B5CF6",color:"white",border:"none",padding:"8px 14px",
+          <button onClick={()=>{
+            const weekLabel = viewType==="week"
+              ? `Week_${weekNum(weekStart)}_${weekStart.toLocaleDateString("nl-NL",{day:"numeric",month:"short"}).replace(/ /g,"_")}`
+              : `${MONTH_LABELS[viewMonth]}_${viewYear}`;
+            const html = generatePrintHTML({
+              deptName: activeDept?.name || "planning",
+              weekLabel,
+              weekStart,
+              dates: displayDates(),
+              employees, clients: deptClients, subcats, schedule, skills, shiftDefs,
+            }, "A4");
+            const blob = new Blob([html], {type:"text/html;charset=utf-8"});
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement("a");
+            a.href     = url;
+            a.download = `planning_${(activeDept?.name||"").replace(/\s+/g,"_")}_${weekLabel}.html`;
+            a.style.display = "none";
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+          }}
+            style={{background:"#3B82F6",color:"white",border:"none",padding:"8px 14px",
               borderRadius:8,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",gap:6,fontSize:13}}>
-            <Download size={14}/> Exporteren
+            <Download size={14}/> Download Planning
           </button>
 
           <button onClick={()=>setAddModal({type:"changePassword",data:{userId:currentUserId,userName:currentEmp?.name||"Mijn account"}})}
